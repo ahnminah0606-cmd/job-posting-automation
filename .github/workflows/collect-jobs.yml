@@ -99,5 +99,6 @@ jobs:
             collection.log
             collection-report.json
             .cache/ocr/*.json
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 7
