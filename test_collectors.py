@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from collectors import (classify_body, collect_site, iso_deadline, job_schema,
-                        labelled, listing_cards, qualification, scoped_body, PublicReader)
+                        labelled, listing_cards, qualification, scoped_body, PublicReader, catch_cards)
 
 
 def soup(html):
@@ -70,7 +70,7 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(labelled(soup('<dl><dt>경력</dt><dd>신입</dd></dl>'), "경력"), "신입")
 
     def test_catch_list_transport_failure_is_not_successful_zero(self):
-        with patch("collectors.PublicReader.json", side_effect=OSError("network down")), redirect_stdout(io.StringIO()):
+        with patch("collectors.PublicReader.read", side_effect=OSError("network down")), redirect_stdout(io.StringIO()):
             postings, report = collect_site("catch", 5)
         self.assertEqual(postings, [])
         self.assertEqual(report["status"], "failed")
@@ -92,11 +92,29 @@ class ParserTests(unittest.TestCase):
     def test_catch_public_list_filters_training_products_and_repeated_ids(self):
         items = [{"RecruitID": 1, "RecruitTitle": "개발 경력", "CompName": "회사", "CareerGubunCode": "경력"},
                  {"RecruitID": 2, "RecruitTitle": "교육", "CompName": "교육기관", "IsProduct": 1}]
-        with patch("collectors.PublicReader.json", side_effect=[{"recruitData": items}, {"recruitData": items}, {"recruitData": []}]), redirect_stdout(io.StringIO()):
+        pages = iter([{"recruitData": items}, {"recruitData": items}, {"recruitData": []}])
+        def read(url, **kwargs):
+            return json.dumps(next(pages)) if 'getRecruitList' in url else '<html></html>'
+        with patch("collectors.PublicReader.read", side_effect=read), redirect_stdout(io.StringIO()):
             postings, report = collect_site("catch", 5)
         self.assertEqual(report["postings_seen"], 1)
         self.assertEqual(report["counts"]["자격 제외"], 1)
         self.assertEqual(report["status"], "success")
+
+    def test_catch_rendered_list_uses_actual_job_rows(self):
+        html = '<div id="recr_result"><table class="table_recr"><tbody><tr><td><p class="name2">회사</p></td><td><p class="subj2">반도체 공정 개발 신입</p></td><td><a href="/NCS/RecruitInfoDetails/42"><p class="cond ico1">신입</p></a></td></tr></tbody></table></div>'
+        cards = catch_cards(soup(html))
+        self.assertEqual(cards[0]['id'], '42')
+        self.assertEqual(cards[0]['company'], '회사')
+
+    def test_catch_api_403_can_use_public_browser_without_hiding_failure(self):
+        denied = HTTPError('url', 403, 'Forbidden', Message(), io.BytesIO())
+        card = dict(id='42', company='회사', title='개발 경력', career='경력', url='https://www.catch.co.kr/NCS/RecruitInfoDetails/42')
+        with patch('collectors.PublicReader.read', side_effect=denied), patch('collectors.CatchBrowser') as browser, redirect_stdout(io.StringIO()):
+            browser.return_value.__enter__.return_value.cards.return_value = [card]
+            postings, report = collect_site('catch', 1)
+        self.assertEqual(report['status'], 'success')
+        self.assertEqual(report['postings_seen'], 1)
 
 
 if __name__ == "__main__":

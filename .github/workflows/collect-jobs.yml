@@ -5,6 +5,21 @@ on:
     # 00:00 UTC = 09:00 Asia/Seoul, every day.
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      site:
+        description: '검증할 목록 (예약 실행은 항상 all)'
+        type: choice
+        default: all
+        options:
+          - all
+          - rndjob
+          - loofit
+          - saramin-home
+          - saramin-kangso
+          - jobkorea
+          - jasoseol
+          - egong
+          - catch
 
 permissions:
   contents: read
@@ -39,15 +54,25 @@ jobs:
         run: python -m playwright install --with-deps chromium
 
       - name: Collect jobs and sync to Notion
+        shell: bash
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PYTHONUNBUFFERED: '1'
+          COLLECTION_SITE: ${{ inputs.site || 'all' }}
         run: |
+          set -eo pipefail
           if [ -z "$NOTION_TOKEN" ]; then
             echo '::error::Add NOTION_TOKEN under repository Settings > Secrets and variables > Actions.'
             exit 1
           fi
-          python -u fetch_page.py --all --notion --output postings.json | tee collection.log
+          case "$COLLECTION_SITE" in
+            all) args=(--all) ;;
+            rndjob) args=(--rndjob) ;;
+            loofit) args=(--loofit) ;;
+            saramin-home|saramin-kangso|jobkorea|jasoseol|egong|catch) args=(--site "$COLLECTION_SITE") ;;
+            *) echo '::error::Unknown collection site'; exit 1 ;;
+          esac
+          python -u fetch_page.py "${args[@]}" --notion --output postings.json | tee collection.log
 
       - name: Save collection result
         if: always()

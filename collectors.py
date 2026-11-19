@@ -6,7 +6,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from http.cookiejar import CookieJar
-from urllib.error import HTTPError, URLError
+from urllib.error import HTTPError
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, urlencode, unquote_plus, urljoin, urlsplit
 from urllib.request import Request, build_opener, HTTPCookieProcessor
@@ -241,12 +241,46 @@ class JobkoreaBrowser:
         self.pw.stop()
 
 
+def catch_cards(soup):
+    cards = []
+    for row in soup.select("#recr_result .table_recr tbody tr"):
+        anchor = row.select_one('a[href*="/NCS/RecruitInfoDetails/"]')
+        match = re.search(r"/RecruitInfoDetails/(\d+)", anchor["href"]) if anchor else None
+        title = text(row.select_one(".subj2,.subj"))
+        if not match or not title or re.search(r"교육생|훈련생|부트캠프|교육과정", title):
+            continue
+        cards.append(dict(id=match[1], title=title, company=text(row.select_one(".name2,.name")),
+                          career=text(row.select_one(".cond.ico1")),
+                          url="https://www.catch.co.kr/NCS/RecruitInfoDetails/" + match[1]))
+    return cards
+
+
+class CatchBrowser(JobkoreaBrowser):
+    """API가 거절되면 일반 공개 검색 화면을 읽는다. 인증/보안 확인을 우회하지 않는다."""
+    def cards(self, number):
+        if self.page.url == "about:blank":
+            self.page.goto(NEW_SITES["catch"][1], wait_until="commit", timeout=30000)
+            self.page.locator("#recr_result .table_recr tbody tr").first.wait_for(timeout=20000)
+        if number > 1:
+            target = self.page.locator("#recr_result .page3 a").filter(has_text=re.compile(f"^{number}$"))
+            if not target.count():
+                return []
+            target.click()
+            self.page.wait_for_function("n => document.querySelector('#recr_result .page3 a.selected')?.textContent.trim() === String(n)", arg=number, timeout=15000)
+        try:
+            self.page.locator("#recr_result .table_recr tbody tr").first.wait_for(timeout=20000)
+        except Exception:
+            raise CollectionError("캐치 공개 검색 화면 접근 실패 (로그인/보안 확인은 수동 확인 필요)") from None
+        return catch_cards(BeautifulSoup(self.page.content(), "html.parser"))
+
+
 def collect_site(key, limit=50):
     name, url = NEW_SITES[key]
     reader = PublicReader(interval=1.5 if key == "catch" else 0.5)
     counts, failures = Counter(), []
     postings, audit, seen = [], [], set()
     browser = None
+    catch_browser = None
 
     def record(card, decision, company=None, title=None, deadline=None, source_id=None):
         result, evidence = decision
@@ -369,11 +403,26 @@ def collect_site(key, limit=50):
             for page in range(1, 6):
                 if key == "catch":
                     params = dict(Keyword="", JobCode="", Sido="", Career="", JCode="", Size="", EduLevel="", WorkPosition="", CompID="", GroupCode="", Sort=0, curpage=page, pageSize=30, onRecruitYN="Y", ExceptIDList="")
-                    data = reader.json("https://www.catch.co.kr/api/v1.0/recruit/information/getRecruitList?" + urlencode(params))
-                    items = data.get("recruitData")
-                    if not isinstance(items, list):
-                        raise CollectionError("캐치 공개 목록 형식 변경")
-                    cards = [dict(id=str(i["RecruitID"]), title=i["RecruitTitle"], company=i["CompName"], career=i.get("CareerGubunCode", ""), url=f"https://www.catch.co.kr/NCS/RecruitInfoDetails/{i['RecruitID']}") for i in items if not i.get("IsProduct")]
+                    if catch_browser:
+                        cards = catch_browser.cards(page)
+                        items = cards
+                    else:
+                        try:
+                            if page == 1:
+                                reader.read(url)
+                            api_url = "https://www.catch.co.kr/api/v1.0/recruit/information/getRecruitList?" + urlencode(params)
+                            data = json.loads(reader.read(api_url, referer=url))
+                            items = data.get("recruitData")
+                            if not isinstance(items, list):
+                                raise CollectionError("캐치 공개 목록 형식 변경")
+                            cards = [dict(id=str(i["RecruitID"]), title=i["RecruitTitle"], company=i["CompName"], career=i.get("CareerGubunCode", ""), url=f"https://www.catch.co.kr/NCS/RecruitInfoDetails/{i['RecruitID']}") for i in items if not i.get("IsProduct")]
+                        except HTTPError as error:
+                            if error.code not in {403, 429}:
+                                raise
+                            print("캐치 | 공개 API 접근 제한: 일반 브라우저 검색 화면으로 확인", flush=True)
+                            catch_browser = CatchBrowser().__enter__()
+                            cards = catch_browser.cards(page)
+                            items = cards
                 else:
                     data = reader.json(f"https://egongmoya.letuin.com/api/board/CommunityBoard/list/11?page={page}")
                     if data.get("code") != 1000:
@@ -407,6 +456,8 @@ def collect_site(key, limit=50):
     finally:
         if browser:
             browser.__exit__()
+        if catch_browser:
+            catch_browser.__exit__()
     report = dict(site=name, pages=pages_read, postings_seen=sum(counts.values()),
                   counts=dict(counts), failures=failures, audit=audit,
                   status="failed" if failures else "success")
