@@ -231,8 +231,48 @@ def scope_ocr_role(html, role, roles):
     return "<section>" + "".join("<p>" + html_module.escape(line) + "</p>" for line in content.splitlines()) + "</section>"
 
 
+def split_ocr_table(html):
+    """반복된 직무명→담당업무→개별자격과 마지막 공통자격이 명시된 포스터만 분리한다."""
+    soup = BeautifulSoup(html, 'html.parser')
+    lines = [p.get_text(' ', strip=True) for p in soup.select('section[data-ocr] p[data-y]')]
+    full = '\n'.join(lines)
+    if not re.search(r'모집\s*(?:직무|부문|분야)', full):
+        return []
+    headings = []
+    for index, line in enumerate(lines):
+        match = re.search(r'담당\s*업무', line)
+        if not match:
+            continue
+        prefix = line[:match.start()].strip(' •·*-[]')
+        title = prefix or (lines[index - 1] if index else '')
+        if not 2 <= len(title) <= 60 or re.search(r'요건|자격|우대|필수|[。:：]|^[-•0-9]', title):
+            return []
+        headings.append((index if prefix else index - 1, title))
+    common = next((i for i, line in enumerate(lines) if re.search(r'공통\s*(?:사항|자격)', line)), None)
+    if len(headings) < 2 or len({title for _, title in headings}) != len(headings) or common is None or common <= headings[-1][0]:
+        return []
+    stop = next((i for i in range(common + 1, len(lines)) if re.search(r'채용\s*프로세스|전형\s*절차|지원\s*방법|모집\s*기간', lines[i])), len(lines))
+    shared = lines[common:stop]
+    if not re.search(r'자격|요건', '\n'.join(shared)):
+        return []
+    roles = []
+    for i, (start, title) in enumerate(headings):
+        end = headings[i + 1][0] if i + 1 < len(headings) else common
+        content = lines[start:end]
+        value = '\n'.join(content)
+        if not re.search(r'필수\s*요건|지원\s*자격|자격\s*요건', value) or not re.search(r'우대\s*사항', value):
+            return []
+        content += ['지원자격', *shared]
+        body = '<section>' + ''.join('<p>' + html_module.escape(value) + '</p>' for value in content) + '</section>'
+        roles.append((title, body))
+    return roles
+
+
 def split_ocr_roles(html):
     """각각 제목·업무·자격을 갖춘 별도 직무 포스터만 분리한다. 표의 행은 추정하지 않는다."""
+    table_roles = split_ocr_table(html)
+    if table_roles:
+        return table_roles
     soup = BeautifulSoup(html, 'html.parser')
     sections = soup.select('section[data-ocr]')
     roles, unassigned = [], []

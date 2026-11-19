@@ -32,6 +32,8 @@ jobs:
         run: |
           python -u fetch_page.py --site jobkorea --limit 5 --output postings.json
           python -c "import json; r=json.load(open('collection-report.json')); n=sum(e.get('lines',0)>0 for s in r for e in s.get('ocr',[])); print('OCR images with text:', n); assert n > 0, 'No detailed image reached OCR'"
+      - name: Verify actual multi-role posters without Notion writes
+        run: python -u verify_image_posters.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -40,5 +42,7 @@ jobs:
           path: |
             collection-report.json
             postings.json
+            image-postings.json
+            image-verification-report.json
             .cache/ocr/*.json
           retention-days: 7

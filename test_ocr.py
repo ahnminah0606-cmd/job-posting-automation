@@ -119,3 +119,24 @@ class JobkoreaImageTests(unittest.TestCase):
         self.assertEqual(len(postings), 1)
         self.assertEqual(postings[0]['field'], '반도체')
         download.assert_called_once()
+
+class SharedPosterTests(unittest.TestCase):
+    def html(self, shared='학사 졸업 예정자 지원 가능'):
+        from ocr import enrich_html
+        lines = ['모집 직무', 'AI 서비스 개발', '담당 업무', '생성형 AI 서비스 구축 및 운영 업무 수행', '필수 요건', '프로그래밍 기본 능력', '우대 사항', '프로젝트 경험', '네트워크 운영', '담당 업무', '네트워크 장비 구성 및 운영 업무 수행', '필수 요건', 'TCP/IP 기초', '우대 사항', '자격증 보유', '공통 사항', '공통 자격 요건', shared, '채용 프로세스', '서류 면접']
+        with patch('ocr.image_bytes', return_value=b'image'), patch('ocr.recognize', return_value=OCRTests().document(lines)):
+            return enrich_html('<img src="poster.png">', 'https://example.org')
+
+    def test_shared_poster_keeps_only_ai_role_and_applies_common_qualification(self):
+        from collectors import egong_roles
+        roles = egong_roles('AI 및 네트워크 등 채용형 인턴 채용', self.html(), 'https://example.org')
+        self.assertEqual([r for t,(r,e) in roles], ['AX', '직무 제외'])
+        self.assertEqual(roles[0][0], 'AI 서비스 개발 (채용형 인턴)')
+        roles = egong_roles('AI 및 네트워크 등 채용형 인턴 채용', self.html('석사 이상'), 'https://example.org')
+        self.assertTrue(all(r not in {'AX','반도체'} for t,(r,e) in roles))
+
+    def test_ambiguous_multi_role_image_is_reviewed_instead_of_merged(self):
+        from collectors import egong_roles
+        html = self.html().replace('공통 사항', '기타 사항').replace('공통 자격 요건', '별도 안내')
+        roles = egong_roles('AI 및 네트워크 등 채용형 인턴 채용', html, 'https://example.org')
+        self.assertEqual(roles[0][1][0], '수집 제외')

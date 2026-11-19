@@ -245,7 +245,7 @@ def show_rndjob():
 
 
 LOOFIT_DUTY = re.compile(r"담당\s*업무|주요\s*업무|수행\s*업무|직무\s*(?:내용|소개)|업무\s*(?:내용|소개)|주요\s*역할")
-LOOFIT_STOP = re.compile(r"지원\s*자격|응시\s*자격|자격\s*(?:요건|사항)|우대\s*(?:사항|조건)|근무\s*(?:조건|시간)|전형\s*(?:절차|일정)|기타사항|모집분야")
+LOOFIT_STOP = re.compile(r"필수\s*요건|지원\s*자격|응시\s*자격|자격\s*(?:요건|사항)|우대\s*(?:사항|조건)|근무\s*(?:조건|시간)|전형\s*(?:절차|일정)|기타사항|모집분야")
 
 
 def classify_loofit_jd(title, html, industry):

@@ -150,6 +150,28 @@ def classify_body(title, html, industry="", base_url=""):
     return classify_loofit_jd(title, str(soup), industry)
 
 
+def egong_roles(title, html, base_url):
+    try:
+        html = enrich_html(html, base_url)
+    except OCRError as error:
+        return [(title, ("수집 제외", str(error)))]
+    separate = split_ocr_roles(html)
+    if not separate:
+        lines = BeautifulSoup(html, "html.parser").select("section[data-ocr] p")
+        if sum(bool(re.search(r"담당\s*업무", p.get_text())) for p in lines) > 1:
+            return [(title, ("수집 제외", "여러 직무의 OCR 자격 구획을 명확히 분리하지 못함"))]
+        return [(title, classify_body(title, html, base_url=base_url))]
+    decisions = []
+    for role_title, body in separate:
+        intern = "인턴" in title and re.search(r"졸업\s*예정", BeautifulSoup(body, "html.parser").get_text())
+        career = "신입" if "신입" in role_title or intern else ""
+        if intern and "인턴" not in role_title:
+            role_title += " (채용형 인턴)" if "채용형 인턴" in title else " (인턴)"
+        decision = qualification(role_title, career) or classify_body(role_title, body)
+        decisions.append((role_title, decision))
+    return decisions
+
+
 def scoped_body(html, role):
     """다직무 공고를 한 행으로 섞지 않도록 직무가 명시된 최소 구획만 사용한다."""
     soup = BeautifulSoup(html, "html.parser")
@@ -369,17 +391,9 @@ def collect_site(key, limit=50):
                 if view.get("is_secret") == "y":
                     raise CollectionError("비공개 공고")
                 company, title, deadline = card["company"], card["title"], None
-                try:
-                    html = enrich_html(unquote_plus(view.get("content", "")), card["url"])
-                    separate = split_ocr_roles(html)
-                    if separate:
-                        for role_title, body in separate:
-                            role_decision = qualification(role_title, "신입" if "신입" in role_title else "")
-                            record(card, role_decision or classify_body(role_title, body), title=role_title)
-                        return
-                    decision = classify_body(title, html, base_url=card["url"])
-                except OCRError as error:
-                    decision = ("수집 제외", str(error))
+                for role_title, decision in egong_roles(title, unquote_plus(view.get("content", "")), card["url"]):
+                    record(card, decision, title=role_title)
+                return
             else:
                 raise CollectionError("지원하지 않는 수집기")
             record(card, decision, company, title, deadline)

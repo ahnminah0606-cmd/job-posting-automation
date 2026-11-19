@@ -8,3 +8,5 @@ postings*.json
 collection.log
 collection-report*.json
 .cache/
+image-postings.json
+image-verification-report.json
