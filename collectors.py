@@ -339,9 +339,15 @@ def collect_site(key, limit=50):
                 decision = qualification(title, str(schema.get("experienceRequirements", "")), str(schema.get("educationRequirements", "")))
                 deadline = iso_deadline(schema.get("validThrough"))
                 if not decision:
-                    if browser is None:
-                        browser = JobkoreaBrowser().__enter__()
-                    decision = classify_body(title, browser.body(card["url"]), base_url=card["url"])
+                    # 화면의 "상세 모집 요강" iframe이 제공하는 공개 HTML을 직접 읽는다.
+                    # iframe 부착 직후 비어 있는 about:blank 프레임을 읽는 경쟁을 피한다.
+                    frame_url = "https://www.jobkorea.co.kr/Recruit/GI_Read_Comt_Ifrm?" + urlencode({
+                        "Gno": card["id"], "isHiringCenter": "false", "hideMapView": "false"})
+                    frame = reader.soup(frame_url, referer=card["url"])
+                    body = frame.select_one('[data-sentry-component="HtmlViewer"]')
+                    if body is None:
+                        raise CollectionError("잡코리아 공개 상세요강 본문 없음")
+                    decision = classify_body(title, str(body), base_url=frame_url)
             elif key == "catch":
                 soup = reader.soup(card["url"])
                 schema = next(job_schema(soup), None)

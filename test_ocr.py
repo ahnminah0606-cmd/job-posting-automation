@@ -101,3 +101,21 @@ class PosterRoleTests(unittest.TestCase):
     def test_ocr_career_field_label_is_not_experience_requirement(self):
         result = OCRTests().classify_image(['경력', '신입', '담당업무', '반도체 공정 개발 및 장비 기술 개선 업무 수행', '지원자격', '학사 졸업 예정자 지원 가능'])
         self.assertEqual(result[0], '반도체', result)
+
+class JobkoreaImageTests(unittest.TestCase):
+    def test_public_detail_frame_reaches_image_ocr_without_browser_race(self):
+        import io
+        from contextlib import redirect_stdout
+        from bs4 import BeautifulSoup
+        from collectors import collect_site
+        listing = BeautifulSoup('<li><a class="coLink">반도체회사</a><a title="반도체 공정 개발 신입" href="/Recruit/GI_Read/123">공고</a><div class="sDesc"><strong>신입</strong></div></li>', 'html.parser')
+        detail = BeautifulSoup('<script type="application/ld+json">{"@type":"JobPosting","title":"반도체 공정 개발 신입","hiringOrganization":{"name":"반도체회사"},"experienceRequirements":"신입","educationRequirements":"학사"}</script>', 'html.parser')
+        frame = BeautifulSoup('<table data-sentry-component="HtmlViewer"><tr><td><img src="https://example.org/poster.png"></td></tr></table>', 'html.parser')
+        doc = OCRTests().document(['담당업무', '반도체 공정 개발 및 장비 기술 개선 업무 수행', '지원자격', '학사 졸업 예정자 지원 가능'])
+        with redirect_stdout(io.StringIO()), patch('collectors.PublicReader') as reader, patch('ocr.image_bytes', return_value=b'image') as download, patch('ocr.recognize', return_value=doc):
+            reader.return_value.soup.side_effect = [listing, detail, frame]
+            postings, report = collect_site('jobkorea', 1)
+        self.assertEqual(report['status'], 'success')
+        self.assertEqual(len(postings), 1)
+        self.assertEqual(postings[0]['field'], '반도체')
+        download.assert_called_once()
