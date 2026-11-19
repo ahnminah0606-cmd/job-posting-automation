@@ -1,11 +1,11 @@
-"""채용 사이트의 접속을 확인하거나 R&D잡 첫 페이지의 공고를 분류한다."""
+"""채용 사이트의 접속을 확인하거나 R&D잡 1~5페이지의 관심 공고를 찾는다."""
 
 import argparse
 import re
 from collections import Counter
 from http.client import HTTPException
 from urllib.error import URLError
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.request import urlopen
 
 
@@ -180,27 +180,53 @@ def classify_card(card, listing_url):
 
 def show_rndjob():
     listing_url = SITES["R&D잡"]
-    listing = read_rndjob_page(listing_url)
     counts = Counter()
-    for card in listing.select(".job-card"):
-        company, title, url, result, evidence = classify_card(card, listing_url)
-        counts[result] += 1
-        print(f"{company} | {result} | {title}")
-        print(f"근거: {evidence}")
-        if url:
+    seen = set()
+    pages_read = 0
+    for page in range(1, 6):
+        try:
+            page_url = listing_url if page == 1 else (
+                f"{listing_url}?agecd=&areacd=&bizcd=&careercd=&catecd=&cur_pack=0"
+                f"&empcd=&gcnt=&gtxt=&gtype=&page={page}&schoolcd=&ser_type=&sfield=&srno=&ste="
+            )
+            listing = read_rndjob_page(page_url)
+        except (URLError, OSError, HTTPException) as error:
+            print(f"{page}페이지 목록 접속 실패 | {error}")
+            continue
+        cards = listing.select(".job-card")
+        if not cards:
+            print(f"{page}페이지에서 공고를 읽지 못했습니다.")
+            continue
+        pages_read += 1
+        for card in cards:
+            link = card.select_one(".card-title a[href]")
+            if link:
+                parts = urlsplit(urljoin(listing_url, link["href"]))
+                job_id = parse_qs(parts.query).get("gno", [""])[0]
+                if job_id:
+                    key = (parts.path, job_id)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+            company, title, url, result, evidence = classify_card(card, listing_url)
+            counts[result] += 1
+            if result not in INTERESTS:
+                continue
+            print(f"{company} | {result} | {title}")
+            print(f"근거: {evidence}")
             print(url)
-        print()
+            print()
     total = sum(counts.values())
-    if not total:
-        print("목록에서 공고 카드를 읽지 못했습니다. 목록 화면을 확인하세요.")
+    if not pages_read:
+        raise SystemExit("목록을 수집하지 못해 관심 공고 수를 확인할 수 없습니다.")
     selected = sum(counts[key] for key in INTERESTS)
-    print(f"첫 페이지 {total}건 | 관심 공고 {selected}건")
+    print(f"목록 {pages_read}/5페이지 | 공고 {total}건 | 관심 공고 {selected}건")
     print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rndjob", action="store_true", help="R&D잡 첫 페이지의 공고별 판정과 근거 보기")
+    parser.add_argument("--rndjob", action="store_true", help="R&D잡 1~5페이지의 관심 공고와 근거 보기")
     if parser.parse_args().rndjob:
         try:
             show_rndjob()
