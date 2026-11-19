@@ -1,6 +1,7 @@
 """채용 사이트의 접속을 확인하거나 R&D잡 공고 한 건을 읽는다."""
 
 import argparse
+import re
 from http.client import HTTPException
 from urllib.error import URLError
 from urllib.parse import urljoin, urlsplit
@@ -38,25 +39,48 @@ def read_rndjob_page(url):
     return BeautifulSoup(content, "html.parser", from_encoding=charset)
 
 
+EXCLUDED_QUALIFICATION = re.compile(
+    r"경력|석사|박사|석[·ㆍ/･・-]?박(?:통합|사)?|대학원졸|대학원석|대학원박"
+    r"|(?<![a-z])(?:ph\.?\s*d\.?|master['’]s|masters?\s+degree|doctorate|doctoral)(?![a-z])",
+    re.IGNORECASE,
+)
+
+
+def excluded_qualification(text):
+    # 한글 공고에는 '경 력', '석 · 박사'처럼 글자 사이에 공백이 들어가기도 한다.
+    compact = re.sub(r"(?<=[가-힣·ㆍ/･・-])\s+(?=[가-힣·ㆍ/･・-])", "", text)
+    return EXCLUDED_QUALIFICATION.search(compact)
+
+
 def show_rndjob():
     listing_url = SITES["R&D잡"]
     listing = read_rndjob_page(listing_url)
     for card in listing.select(".job-card"):
         career_tag = card.select_one(".tag--dark")
         career = career_tag.get_text(strip=True) if career_tag else ""
-        if "신입" not in career and "무관" not in career:
-            continue
         company = card.select_one(".brand-logo")
         link = card.select_one(".card-title a[href]")
         if not company or not link:
+            continue
+        title = link.get_text(" ", strip=True)
+        tags = [tag.get_text(" ", strip=True) for tag in card.select(".card-tag")]
+        if any(excluded_qualification(value) for value in [title, career, *tags]):
+            continue
+        if "신입" not in career and career != "무관":
             continue
         url = urljoin(listing_url, link["href"])
         parsed = urlsplit(url)
         if parsed.hostname != urlsplit(listing_url).hostname or parsed.scheme != "https":
             continue
-        print(f"{company.get_text(strip=True)} | {link.get_text(strip=True)} | {career}")
-        print(url)
         detail = read_rndjob_page(url)
+        # '경력'은 신입 공고에도 있는 양식 항목명이다. 지원자격에서는 입력값만 검사한다.
+        conditions = []
+        for block in detail.select(".notice_info_box .con"):
+            label = block.select_one(".tit")
+            if label and label.get_text(strip=True) == "지원자격":
+                conditions.extend(item.get_text(" ", strip=True) for item in block.select("dd"))
+        if any(excluded_qualification(value) for value in conditions):
+            continue
         sections = []
         for section in detail.select(".basic_tab_con .sub_each2"):
             heading = section.select_one(".sub_tit2")
@@ -65,9 +89,13 @@ def show_rndjob():
                 text = body.get_text("\n", strip=True)
                 if text:
                     sections.append(f"{heading.get_text(strip=True)}\n{text}")
-        print("\n\n".join(sections) or "JD 본문을 읽지 못했습니다. 상세 링크를 확인하세요.")
+        if not sections or any(excluded_qualification(value) for value in sections):
+            continue
+        print(f"{company.get_text(strip=True)} | {title} | {career}")
+        print(url)
+        print("\n\n".join(sections))
         return
-    print("첫 페이지에서 신입 지원 가능 표시가 있는 공고를 찾지 못했습니다.")
+    print("첫 페이지에 경력·석박사 제외 조건을 통과하고 본문을 읽을 수 있는 공고가 없습니다.")
 
 
 def main():
