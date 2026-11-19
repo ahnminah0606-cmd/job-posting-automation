@@ -60,13 +60,13 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(row["properties"]["마감일"]["date"]["start"], "2026-12-01")
         self.assertEqual(row["properties"]["관심 분야"]["select"]["name"], "반도체 × AX")
 
-    def test_title_change_same_source_id_updates(self):
+    def test_different_role_title_is_not_overwritten(self):
         client = MemoryNotion()
         client.upsert(posting())
-        self.assertEqual(client.upsert(posting(title="변경된 직무명"))[0], "갱신")
-        self.assertEqual(len(client.rows), 1)
+        self.assertEqual(client.upsert(posting(title="다른 직무명"))[0], "신규")
+        self.assertEqual(len(client.rows), 2)
 
-    def test_cross_source_same_url_company_role_merges_and_retains_both_keys(self):
+    def test_cross_source_same_url_company_role_merges_and_retains_both_sources(self):
         client = MemoryNotion()
         first = posting()
         client.upsert(first)
@@ -76,7 +76,9 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(len(client.rows), 1)
         props = client.rows[0]["properties"]
         self.assertIn("R&D잡", props["출처"]["rich_text"][0]["text"]["content"])
-        self.assertIn(first["key"], props["수집 키"]["rich_text"][0]["text"]["content"])
+        self.assertNotIn("수집 키", props)
+        self.assertNotIn("판단 근거", props)
+        self.assertIn("SKALA 루핏", props["출처"]["rich_text"][0]["text"]["content"])
 
     def test_different_role_same_apply_link_stays_separate(self):
         client = MemoryNotion()

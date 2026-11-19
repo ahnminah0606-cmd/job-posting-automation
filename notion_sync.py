@@ -17,8 +17,7 @@ from dotenv import load_dotenv
 DATA_SOURCE_ID = "41d92822-e109-819f-afd2-000b9d895be1"
 FIELDS = {"반도체": "반도체", "AX": "AX", "반도체×AX": "반도체 × AX"}
 SCHEMA = {"직무명": "title", "회사": "rich_text", "공고 링크": "url",
-          "관심 분야": "select", "마감일": "date", "지원 상태": "status",
-          "수집 키": "rich_text", "판단 근거": "rich_text", "출처": "rich_text"}
+          "관심 분야": "select", "마감일": "date", "지원 상태": "status", "출처": "rich_text"}
 
 
 class NotionError(RuntimeError):
@@ -83,18 +82,14 @@ def property_text(properties, name):
 
 def properties_for(posting, existing=None):
     props = existing.get("properties", {}) if existing else {}
-    keys = property_text(props, "수집 키").splitlines()
     sources = property_text(props, "출처").splitlines()
-    for values, value in ((keys, posting["key"]), (sources, posting["source"])):
-        if value not in values:
-            values.append(value)
+    if posting["source"] not in sources:
+        sources.append(posting["source"])
     result = {
         "직무명": {"title": rich_text(posting["title"])},
         "회사": {"rich_text": rich_text(posting["company"])},
         "관심 분야": {"select": {"name": FIELDS[posting["field"]]}},
-        "판단 근거": {"rich_text": rich_text(posting["evidence"])},
         "출처": {"rich_text": rich_text("\n".join(filter(None, sources)))},
-        "수집 키": {"rich_text": rich_text("\n".join(filter(None, keys)))},
     }
     # 이번에 읽지 못한 링크·마감일로 기존 값을 지우지 않는다.
     if posting["url"]:
@@ -136,7 +131,7 @@ class NotionClient:
                          404: "수집함에 연결을 추가하고 데이터 소스 ID를 확인하세요."}
                 # 생성 요청은 서버 반영 여부가 불명확할 수 있어 자동 재시도하지 않는다.
                 raise NotionError(f"Notion HTTP {error.code}. " + hints.get(error.code,
-                                  "저장 중단. 다시 실행하면 수집 키로 기존 행을 먼저 확인합니다.")) from None
+                                  "저장 중단. 다시 실행하면 공고 링크·회사·직무명으로 기존 행을 먼저 확인합니다.")) from None
             except (URLError, OSError, ValueError):
                 raise NotionError("Notion 응답 확인 실패. 저장이 반영됐을 수 있으므로 재실행 시 기존 행을 먼저 조회합니다.") from None
 
@@ -149,9 +144,7 @@ class NotionClient:
             raise NotionError("수집함 열/옵션이 예상과 다릅니다: " + ", ".join(invalid))
 
     def find_existing(self, posting):
-        filters = [{"property": "수집 키", "rich_text": {"contains": posting["key"]}}]
-        if posting["url"]:
-            filters.append({"property": "회사", "rich_text": {"equals": posting["company"]}})
+        filters = [{"property": "회사", "rich_text": {"equals": posting["company"]}}]
         rows = []
         cursor = None
         while True:
@@ -166,14 +159,14 @@ class NotionClient:
         matches = []
         for row in rows:
             props = row["properties"]
-            if posting["key"] in property_text(props, "수집 키").splitlines():
-                matches.append(row)
+            if (property_text(props, "회사") != posting["company"]
+                    or property_text(props, "직무명") != posting["title"]):
                 continue
-            # 사이트 간 병합은 회사·직무·지원 URL이 모두 일치할 때만 한다.
+            # 회사·직무가 같고 링크도 같으면 같은 행이다. 추가 속성 열은 필요 없다.
             old_url = props.get("공고 링크", {}).get("url") or ""
-            if (posting["url"] and property_text(props, "회사") == posting["company"]
-                    and property_text(props, "직무명") == posting["title"]
-                    and canonical_url(old_url) == posting["url"]):
+            same_url = posting["url"] and old_url and canonical_url(old_url) == posting["url"]
+            same_source_without_url = (not posting["url"] or not old_url) and posting["source"] in property_text(props, "출처").splitlines()
+            if same_url or same_source_without_url:
                 matches.append(row)
         if len(matches) > 1:
             raise NotionError("동일 공고에 해당하는 기존 행이 여러 개입니다. 수집함에서 중복을 확인하세요.")
