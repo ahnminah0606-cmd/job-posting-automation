@@ -255,6 +255,20 @@ def catch_cards(soup):
     return cards
 
 
+def catch_featured_cards(soup):
+    """동적 검색이 차단되어도 공개 HTML에 직접 제공된 대표 공고는 읽을 수 있다."""
+    cards, seen = [], set()
+    for anchor in soup.select('a.link[href^="/NCS/RecruitInfoDetails/"]'):
+        match = re.search(r"/RecruitInfoDetails/(\d+)", anchor["href"])
+        title, company = text(anchor.select_one(".subj")), text(anchor.select_one(".name"))
+        if not match or match[1] in seen or not title or not company:
+            continue
+        seen.add(match[1])
+        cards.append(dict(id=match[1], title=title, company=company, career="",
+                          url="https://www.catch.co.kr/NCS/RecruitInfoDetails/" + match[1]))
+    return cards
+
+
 class CatchBrowser(JobkoreaBrowser):
     """API가 거절되면 일반 공개 검색 화면을 읽는다. 인증/보안 확인을 우회하지 않는다."""
     def cards(self, number):
@@ -277,10 +291,11 @@ class CatchBrowser(JobkoreaBrowser):
 def collect_site(key, limit=50):
     name, url = NEW_SITES[key]
     reader = PublicReader(interval=1.5 if key == "catch" else 0.5)
-    counts, failures = Counter(), []
+    counts, failures, warnings = Counter(), [], []
     postings, audit, seen = [], [], set()
     browser = None
     catch_browser = None
+    featured_only = False
 
     def record(card, decision, company=None, title=None, deadline=None, source_id=None):
         result, evidence = decision
@@ -421,7 +436,14 @@ def collect_site(key, limit=50):
                                 raise
                             print("캐치 | 공개 API 접근 제한: 일반 브라우저 검색 화면으로 확인", flush=True)
                             catch_browser = CatchBrowser().__enter__()
-                            cards = catch_browser.cards(page)
+                            try:
+                                cards = catch_browser.cards(page)
+                            except Exception:
+                                cards = catch_featured_cards(reader.soup(url))
+                                if not cards:
+                                    raise CollectionError("캐치 API·브라우저·공개 HTML 목록 모두 확인 불가") from None
+                                featured_only = True
+                                warnings.append("전체 검색 목록 접근 제한: 공개 HTML 대표 공고만 수집 (전체 검색 결과 아님)")
                             items = cards
                 else:
                     data = reader.json(f"https://egongmoya.letuin.com/api/board/CommunityBoard/list/11?page={page}")
@@ -449,7 +471,7 @@ def collect_site(key, limit=50):
                         break
                     seen.add(card["id"])
                     process(card)
-                if len(seen) >= limit:
+                if len(seen) >= limit or featured_only:
                     break
     except Exception as error:
         failures.append(f"목록 수집 실패 | {type(error).__name__}: {str(error).splitlines()[0][:200]}")
@@ -459,9 +481,12 @@ def collect_site(key, limit=50):
         if catch_browser:
             catch_browser.__exit__()
     report = dict(site=name, pages=pages_read, postings_seen=sum(counts.values()),
-                  counts=dict(counts), failures=failures, audit=audit,
-                  status="failed" if failures else "success")
+                  counts=dict(counts), failures=failures, warnings=warnings, audit=audit,
+                  coverage="featured-only" if featured_only else "configured-list",
+                  status="failed" if failures else "partial" if warnings else "success")
     print(f"{name} | 목록 {pages_read}페이지 | 직무 {sum(counts.values())}건 | 관심 {len(postings)}건 | " + " | ".join(f"{k} {v}건" for k, v in counts.items()), flush=True)
     for failure in failures:
         print(f"{name} | 오류: {failure}", flush=True)
+    for warning in warnings:
+        print(f"{name} | 일부 수집: {warning}", flush=True)
     return postings, report

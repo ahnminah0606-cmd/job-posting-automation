@@ -8,7 +8,7 @@ from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from collectors import (classify_body, collect_site, iso_deadline, job_schema,
-                        labelled, listing_cards, qualification, scoped_body, PublicReader, catch_cards)
+                        labelled, listing_cards, qualification, scoped_body, PublicReader, catch_cards, CollectionError)
 
 
 def soup(html):
@@ -115,6 +115,20 @@ class ParserTests(unittest.TestCase):
             postings, report = collect_site('catch', 1)
         self.assertEqual(report['status'], 'success')
         self.assertEqual(report['postings_seen'], 1)
+
+    def test_catch_featured_fallback_is_explicitly_partial(self):
+        html = '<a class="link" href="/NCS/RecruitInfoDetails/42"><p class="name">회사</p><p class="subj">연구 경력</p></a>'
+        def read(url, **kwargs):
+            if 'getRecruitList' in url:
+                raise HTTPError(url, 403, 'Forbidden', Message(), io.BytesIO())
+            return html
+        with patch('collectors.PublicReader.read', side_effect=read), patch('collectors.CatchBrowser') as browser, redirect_stdout(io.StringIO()):
+            browser.return_value.__enter__.return_value.cards.side_effect = CollectionError('접근 제한')
+            postings, report = collect_site('catch', 50)
+        self.assertEqual(report['status'], 'partial')
+        self.assertEqual(report['coverage'], 'featured-only')
+        self.assertEqual(report['postings_seen'], 1)
+        self.assertTrue(report['warnings'])
 
 
 if __name__ == "__main__":

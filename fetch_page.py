@@ -428,7 +428,8 @@ def main():
         print(json.dumps(postings, ensure_ascii=False, indent=2))
         print("미리 보기 완료 | Notion 쓰기 없음")
     failed = [report["site"] for report in reports if report["status"] == "failed"]
-    print(f"전체 결과 | 사이트 {len(reports)}곳 | 오류 {len(failed)}곳 | 관심 직무 {len(postings)}건 | 보고서 {args.report}", flush=True)
+    partial = [report["site"] for report in reports if report["status"] == "partial"]
+    print(f"전체 결과 | 사이트 {len(reports)}곳 | 오류 {len(failed)}곳 | 일부 수집 {len(partial)}곳 | 관심 직무 {len(postings)}건 | 보고서 {args.report}", flush=True)
     if failed:
         parser.exit(1, "일부 사이트 실패 (정상 사이트 결과는 보관/저장됨): " + ", ".join(failed) + "\n")
 
