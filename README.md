@@ -29,7 +29,7 @@ Actions → Daily job collection → Run workflow에서 수동 실행도 가능�
 
 전 사이트의 모든 공고를 전수 수집하는 것은 아닙니다. 추가 사이트별 한도는 `--limit`(1~200)으로 조정합니다. 자소설닷컴의 한 공고에 여러 직무가 있으면 직무별로 분류하므로 직무 집계가 공고 한도를 넘을 수 있습니다. 다직무 공고에서 직무별 요강 구획을 확실히 나누지 못하면 저장하지 않습니다. 사람인 홈과 강소기업은 같은 공고 ID를 동일한 공고 링크로 정규화해 중복 저장을 방지합니다.
 
-상세요강의 이미지(`img`)는 한국어·영어 OCR로 읽고, 읽은 담당업무와 지원자격에 동일한 분류 기준을 적용합니다. Linux/GitHub Actions는 Tesseract `kor+eng`, macOS는 기본 Vision 엔진을 사용합니다. 긴 이미지는 겹치는 구간으로 나눠 판독하고, 내용 해시로 결과를 캐시합니다. 엔진 준비에 실패하면 실행을 중단합니다. 이미지 다운로드 실패·평균 신뢰도 60% 미만·문자 미판독은 `수집 제외`와 검토 근거로 기록합니다. 평균 신뢰도는 정확도 보증이 아니며, 애매한 다직무 구획과 첨부 PDF·SVG는 자동 판정하지 않습니다. OCR 원문은 로컬 `.cache/ocr/*.json`, 이미지 주소·엔진·신뢰도·줄 수는 `collection-report.json`에 남깁니다. 노션에는 기존 7개 속성만 사용합니다.
+상세요강의 이미지(`img`)는 한국어·영어 OCR로 읽고, 읽은 담당업무와 지원자격에 동일한 분류 기준을 적용합니다. Linux/GitHub Actions는 Tesseract `kor+eng`, macOS는 기본 Vision 엔진을 사용합니다. 긴 이미지는 겹치는 구간으로 나눠 판독하고, 내용 해시로 결과를 캐시합니다. 엔진 준비에 실패하면 실행을 중단합니다. 이미지 다운로드 실패·평균 신뢰도 60% 미만·문자 미판독은 `수집 제외`와 검토 근거로 기록합니다. 평균 신뢰도는 정확도 보증이 아니며, 애매한 다직무 구획과 첨부 PDF·SVG는 자동 판정하지 않습니다. OCR 원문은 `.cache/ocr/*.json` 및 Actions artifact에 보관하고 다음 실행에서 캐시를 재사용합니다. 이미지 주소·엔진·신뢰도·줄 수는 `collection-report.json`에 남깁니다. 독립된 직무 포스터가 여러 장이면 각각 제목·업무·자격을 갖추고 별도의 공통 조건이 없는 경우에만 분리합니다. 노션에는 기존 7개 속성만 사용합니다.
 
 여러 직무의 OCR은 명확한 직무 이름부터 다음 직무 이름 전까지 분리하고 담당업무 구획이 있는 경우에만 판정합니다. 공통 자격요건은 함께 적용합니다. 표의 열 구분이나 역할별 자격을 확인할 수 없으면 추정하여 저장하지 않습니다. 목록 접속 실패·상세 HTTP 오류는 별도 실패로 보고하며, 한 사이트가 실패해도 다른 사이트 결과는 계속 저장합니다. 하나 이상 실패하면 종료 코드 1로 GitHub에 표시합니다.
 
@@ -69,7 +69,7 @@ python3 -m venv .venv
 
 Windows에서는 `py -m venv .venv`로 환경을 만들고, 나머지 두 명령의 `.venv/bin/python`을 `.venv\Scripts\python.exe`로 바꾸세요. 두 번째 실행부터는 마지막 명령만 사용합니다.
 
-Linux OCR 준비: `sudo apt-get install tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng`. macOS는 Xcode Command Line Tools의 Swift와 기본 Vision을 사용합니다. GitHub Actions는 OCR 엔진과 언어를 자동 설치합니다.
+Linux OCR 준비: `sudo apt-get install tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng`. macOS는 Xcode Command Line Tools의 Clang과 기본 Vision을 사용합니다. GitHub Actions는 OCR 엔진과 언어를 자동 설치합니다.
 
 ## SKALA 루핏
 

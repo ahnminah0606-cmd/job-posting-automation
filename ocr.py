@@ -38,7 +38,7 @@ class OCRError(RuntimeError):
 def engine():
     if shutil.which("tesseract"):
         return "tesseract"
-    if platform.system() == "Darwin" and shutil.which("swiftc"):
+    if platform.system() == "Darwin" and shutil.which("clang"):
         return "vision"
     raise OCRError("OCR 엔진 없음: Tesseract와 한국어·영어 언어 데이터를 설치하세요.")
 
@@ -49,6 +49,8 @@ def check_engine():
         result = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True, timeout=15)
         if result.returncode or not {"kor", "eng"} <= set(result.stdout.split()):
             raise OCRError("Tesseract의 kor·eng 언어 데이터가 필요합니다.")
+    if name == "vision":
+        prepare_vision()
     return name
 
 
@@ -94,15 +96,24 @@ def tesseract_lines(path, width, height):
     return lines
 
 
-def vision_lines(path):
-    source = Path(__file__).with_name("macos_ocr.swift")
+def prepare_vision():
+    CACHE.mkdir(parents=True, exist_ok=True)
+    source = Path(__file__).with_name("macos_ocr.m")
     digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
     binary = CACHE / ("vision-" + digest)
     if not binary.exists():
-        result = subprocess.run(["swiftc", str(source), "-module-cache-path", str(CACHE / "modules"),
-                                 "-o", str(binary)], capture_output=True, text=True, timeout=120)
+        pending = binary.with_suffix("." + str(os.getpid()) + ".tmp")
+        result = subprocess.run(["clang", "-fobjc-arc", "-fno-modules", "-framework", "Foundation",
+                                 "-framework", "Vision", "-framework", "CoreGraphics", str(source),
+                                 "-o", str(pending)], capture_output=True, text=True, timeout=60)
         if result.returncode:
             raise OCRError("macOS OCR 엔진 준비 실패")
+        pending.replace(binary)
+    return binary
+
+
+def vision_lines(path):
+    binary = prepare_vision()
     result = subprocess.run([str(binary), str(path)], capture_output=True, text=True, timeout=90)
     if result.returncode:
         raise OCRError("macOS 이미지 판독 실패")
@@ -217,3 +228,28 @@ def scope_ocr_role(html, role, roles):
         # 표에서 역할별 행은 찾았지만 업무 컬럼을 식별하지 못하면 추정하지 않는다.
         return ""
     return "<section>" + "".join("<p>" + html_module.escape(line) + "</p>" for line in content.splitlines()) + "</section>"
+
+
+def split_ocr_roles(html):
+    """각각 제목·업무·자격을 갖춘 별도 직무 포스터만 분리한다. 표의 행은 추정하지 않는다."""
+    soup = BeautifulSoup(html, 'html.parser')
+    sections = soup.select('section[data-ocr]')
+    roles, unassigned = [], []
+    for section in sections:
+        lines = [p.get_text(' ', strip=True) for p in section.select('p')]
+        value = '\n'.join(lines)
+        title = lines[0] if lines else ''
+        # 신입 표기가 있는 구체적인 직무 헤더와 자격요건이 한 이미지에 모두 있어야 한다.
+        named = re.search(r'신입|경력|인턴', title) and re.search(r'엔지니어|Engineer|개발|설계|검증|공정|연구|기술|분석|데이터|품질|AI|SW', title, re.I)
+        if named and re.search(r'담당\s*업무|주요\s*업무|수행\s*업무', value) and re.search(r'지원\s*자격|자격\s*요건', value):
+            roles.append((title, str(section)))
+        else:
+            unassigned.append(value)
+    # 로고 외 별도 자격 이미지 또는 공통 요강이 있으면 통째로 재검토한다.
+    if len(roles) < 2 or any(len(value) > 80 for value in unassigned):
+        return []
+    for section in sections:
+        section.decompose()
+    if len(soup.get_text(' ', strip=True)) > 200 or re.search(r'공통|지원\s*자격|자격\s*요건', soup.get_text()):
+        return []
+    return roles

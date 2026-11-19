@@ -260,7 +260,9 @@ def classify_loofit_jd(title, html, industry):
     lines = [line.strip() for line in body.get_text().splitlines() if line.strip()]
     duties = []
     recording = False
-    for line in lines:
+    for index, line in enumerate(lines):
+        if line.replace(" ", "").rstrip(":：") in {"경력", "신입/경력", "경력구분"} and index + 1 < len(lines) and lines[index + 1].replace(" ", "") in {"신입", "무관", "신입/경력"}:
+            continue
         # 양식의 '신입/경력: 신입'에서 실제 자격 값은 '신입'이다.
         value = re.sub(r"^\s*(?:신입\s*/\s*)?경력\s*[:：]\s*", "", line)
         if line not in {"신입/경력", "경력구분"} and excluded_qualification(value):

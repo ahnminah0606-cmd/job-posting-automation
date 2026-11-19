@@ -13,7 +13,7 @@ from urllib.request import Request, build_opener, HTTPCookieProcessor
 
 from bs4 import BeautifulSoup
 from notion_sync import make_posting, deadline_from_text
-from ocr import enrich_html, scope_ocr_role, OCRError
+from ocr import enrich_html, scope_ocr_role, split_ocr_roles, OCRError
 
 
 NEW_SITES = {
@@ -363,7 +363,17 @@ def collect_site(key, limit=50):
                 if view.get("is_secret") == "y":
                     raise CollectionError("비공개 공고")
                 company, title, deadline = card["company"], card["title"], None
-                decision = classify_body(title, unquote_plus(view.get("content", "")), base_url=card["url"])
+                try:
+                    html = enrich_html(unquote_plus(view.get("content", "")), card["url"])
+                    separate = split_ocr_roles(html)
+                    if separate:
+                        for role_title, body in separate:
+                            role_decision = qualification(role_title, "신입" if "신입" in role_title else "")
+                            record(card, role_decision or classify_body(role_title, body), title=role_title)
+                        return
+                    decision = classify_body(title, html, base_url=card["url"])
+                except OCRError as error:
+                    decision = ("수집 제외", str(error))
             else:
                 raise CollectionError("지원하지 않는 수집기")
             record(card, decision, company, title, deadline)

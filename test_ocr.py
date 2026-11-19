@@ -66,3 +66,38 @@ class ScheduleTests(unittest.TestCase):
             main()
         self.assertEqual([call.args[0] for call in collect.call_args_list],
                          ['saramin-home', 'saramin-kangso', 'jobkorea', 'jasoseol', 'egong'])
+
+class EngineTests(unittest.TestCase):
+    @unittest.skipUnless(__import__('os').environ.get('OCR_INTEGRATION') == '1', 'OCR engine integration opt-in')
+    def test_installed_engine_reads_actual_image(self):
+        import io
+        from PIL import Image, ImageDraw, ImageFont
+        from ocr import recognize
+        image = Image.new('RGB', (1200, 300), 'white')
+        draw = ImageDraw.Draw(image)
+        font = ImageFont.load_default(size=40)
+        for index, line in enumerate(['SEMICONDUCTOR PROCESS DEVELOPMENT', 'DUTIES AND RESPONSIBILITIES', 'ENTRY LEVEL RECRUITMENT']):
+            draw.text((35, 35 + index * 75), line, font=font, fill='black')
+        raw = io.BytesIO()
+        image.save(raw, format='PNG')
+        result = recognize(raw.getvalue())
+        self.assertIn('SEMICONDUCTOR', result['text'].upper())
+        self.assertIn('ENTRY', result['text'].upper())
+        self.assertGreaterEqual(result['confidence'], .60)
+
+class PosterRoleTests(unittest.TestCase):
+    def poster(self, title, qualification):
+        return '<section data-ocr="fixture">' + ''.join('<p>' + value + '</p>' for value in [title, '담당업무', '반도체 공정 개발 및 장비 기술 개선 업무 수행', '지원자격', qualification]) + '</section>'
+
+    def test_independent_posters_do_not_share_degree_restriction(self):
+        from ocr import split_ocr_roles
+        html = self.poster('디지털 설계 엔지니어 (신입)', '석사 우대') + self.poster('반도체 검증 엔지니어 (신입)', '학사 졸업 예정자 지원 가능')
+        roles = split_ocr_roles(html)
+        self.assertEqual(len(roles), 2)
+        self.assertEqual([classify_body(t,b)[0] for t,b in roles], ['자격 제외', '반도체'])
+        # 별도의 공통 요강을 놓친 채 두 포스터만 분리해서 통과시키지 않는다.
+        self.assertEqual(split_ocr_roles(html + '<section data-ocr="common"><p>공통 지원자격 석사 이상 ' + '필수 조건 확인 ' * 15 + '</p></section>'), [])
+
+    def test_ocr_career_field_label_is_not_experience_requirement(self):
+        result = OCRTests().classify_image(['경력', '신입', '담당업무', '반도체 공정 개발 및 장비 기술 개선 업무 수행', '지원자격', '학사 졸업 예정자 지원 가능'])
+        self.assertEqual(result[0], '반도체', result)
