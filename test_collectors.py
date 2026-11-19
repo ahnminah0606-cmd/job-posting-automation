@@ -43,6 +43,10 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(classify_body("반도체 개발 신입", '<img src="jd.png">')[0], "수집 제외")
         self.assertEqual(classify_body("반도체 개발 신입", '<p>채용 사이트 바로가기</p>')[0], "수집 제외")
 
+    def test_group_recruitment_is_not_saved_as_one_role(self):
+        html = '<h2>담당업무</h2><p>LLM 서비스 구축과 운영 및 배포 업무를 담당합니다.</p><h2>지원자격</h2><p>학사 졸업예정자</p>'
+        self.assertEqual(classify_body('각 부문 신입 채용', html)[0], '수집 제외')
+
     def test_real_duties_are_classified_but_preferences_do_not_create_ax(self):
         html = '<h2>담당업무</h2><p>웨이퍼 결함 분류 모델 개발 및 배포를 위한 AI 서비스 구축</p><h2>지원자격</h2><p>학사 졸업자 및 졸업예정자 지원 가능</p>'
         self.assertEqual(classify_body("개발 신입", html)[0], "반도체×AX")

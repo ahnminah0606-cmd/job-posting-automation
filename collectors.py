@@ -128,6 +128,8 @@ def qualification(title, career, education=""):
 
 def classify_body(title, html, industry=""):
     from fetch_page import classify_loofit_jd
+    if re.search(r"각\s*(?:부문|직무|분야)|부문별|직무별|전\s*직군|인재풀", title):
+        return "수집 제외", "여러 직무를 묶은 공고: 직무별 본문 분리 확인 필요"
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup.select("script,style,nav,footer"):
         tag.decompose()
