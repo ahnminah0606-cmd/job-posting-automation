@@ -1,12 +1,16 @@
 """채용 사이트의 접속을 확인하거나 R&D잡과 루핏에서 관심 공고를 찾는다."""
 
 import argparse
+import json
 import re
+from pathlib import Path
 from collections import Counter
 from http.client import HTTPException
 from urllib.error import URLError
 from urllib.parse import parse_qs, urljoin, urlsplit
 from urllib.request import urlopen
+
+from notion_sync import NotionClient, NotionError, deadline_from_text, make_posting, save_postings
 
 
 SITES = {
@@ -183,6 +187,7 @@ def show_rndjob():
     counts = Counter()
     seen = set()
     pages_read = 0
+    selected_postings = []
     for page in range(1, 6):
         try:
             page_url = listing_url if page == 1 else (
@@ -216,12 +221,17 @@ def show_rndjob():
             print(f"근거: {evidence}")
             print(url)
             print()
+            source_id = parse_qs(urlsplit(url).query).get("gno", [""])[0]
+            selected_postings.append(make_posting(
+                company, title, url, result, evidence, "R&D잡", source_id,
+                deadline_from_text(card.get_text(" ", strip=True))))
     total = sum(counts.values())
     if not pages_read:
         raise SystemExit("목록을 수집하지 못해 관심 공고 수를 확인할 수 없습니다.")
     selected = sum(counts[key] for key in INTERESTS)
     print(f"목록 {pages_read}/5페이지 | 공고 {total}건 | 관심 공고 {selected}건")
     print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
+    return selected_postings
 
 
 LOOFIT_DUTY = re.compile(r"담당\s*업무|주요\s*업무|수행\s*업무|직무\s*(?:내용|소개)|업무\s*(?:내용|소개)|주요\s*역할")
@@ -298,6 +308,7 @@ def show_loofit():
     counts = Counter()
     seen = set()
     pages_read = 0
+    selected_postings = []
     try:
         with sync_playwright() as pw:
             try:
@@ -336,21 +347,38 @@ def show_loofit():
                         print(f"근거: {evidence}")
                         print(url or f"루핏 목록에서 제목으로 검색: {SITES['SKALA 루핏']}")
                         print()
+                        selected_postings.append(make_posting(
+                            company, title, url, result, evidence, "SKALA 루핏", key or "",
+                            deadline_from_text(card.inner_text())))
             browser.close()
     except BrowserError as error:
         raise SystemExit(f"루핏 수집 중단 | {str(error).splitlines()[0]}") from error
     print(f"루핏 목록 {pages_read}페이지 | 공고 {sum(counts.values())}건 | 관심 공고 {sum(counts[k] for k in INTERESTS)}건")
     print(" | ".join(f"{k} {counts[k]}건" for k in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
+    return selected_postings
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rndjob", action="store_true", help="R&D잡 1~5페이지의 관심 공고와 근거 보기")
     parser.add_argument("--loofit", action="store_true", help="SKALA 루핏 전체 채용정보 1~5페이지 분류")
+    parser.add_argument("--notion", action="store_true", help="관심 공고를 Notion에 저장하거나 기존 행 갱신")
+    parser.add_argument("--output", type=Path, help="관심 공고를 JSON 파일로 보관 (재실행/연결 도구용)")
+    parser.add_argument("--dry-run", action="store_true", help="저장할 관심 공고를 JSON으로 미리 보기; Notion에 쓰지 않음")
     args = parser.parse_args()
+    if (args.notion or args.output or args.dry_run) and not (args.rndjob or args.loofit):
+        parser.error("저장 옵션에는 --rndjob 또는 --loofit을 함께 지정하세요.")
+    client = None
+    if args.notion and not args.dry_run:
+        try:
+            client = NotionClient()
+            client.validate_schema()
+        except NotionError as error:
+            parser.exit(1, f"{error}\n")
+    postings = []
     if args.rndjob:
         try:
-            show_rndjob()
+            postings.extend(show_rndjob())
         except ModuleNotFoundError as error:
             if error.name != "bs4":
                 raise
@@ -359,13 +387,28 @@ def main():
             parser.exit(1, f"R&D잡 접속 실패 | {error}\n")
     if args.loofit:
         try:
-            show_loofit()
+            postings.extend(show_loofit())
         except ModuleNotFoundError as error:
             if error.name not in {"playwright", "bs4"}:
                 raise
             parser.exit(1, "python -m pip install -r requirements.txt 실행 후 python -m playwright install chromium 을 실행하세요.\n")
     if not (args.rndjob or args.loofit):
         check_sites()
+    if args.output:
+        args.output.write_text(json.dumps(postings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        print(f"관심 공고 {len(postings)}건 보관: {args.output}")
+    if args.dry_run:
+        print(json.dumps(postings, ensure_ascii=False, indent=2))
+        print("미리 보기 완료 | Notion 쓰기 없음")
+    elif args.notion:
+        # 수집 결과는 쓰기 실패 전에 파일로 남겨 재수집 없이 복구할 수 있다.
+        backup = args.output or Path("postings.json")
+        if not args.output:
+            backup.write_text(json.dumps(postings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        try:
+            save_postings(postings, client)
+        except (NotionError, ValueError) as error:
+            parser.exit(1, f"{error}\n수집 결과 보관: {backup}\n")
 
 
 if __name__ == "__main__":

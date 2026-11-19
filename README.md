@@ -1,5 +1,17 @@
 # 채용공고 수집 자동화
 
+## 매일 자동 실행 — GitHub Actions
+
+`.github/workflows/collect-jobs.yml`은 GitHub 서버에서 매일 한국시간 오전 9시(UTC 00:00)에 수집과 Notion 저장을 실행합니다. 집 컴퓨터와 Codex 앱을 켜 둘 필요가 없습니다. GitHub 예약은 서버 부하에 따라 지연될 수 있으며, 공개 저장소는 60일간 활동이 없으면 예약 실행이 자동 비활성화될 수 있습니다.
+
+저장소 Settings → Secrets and variables → Actions에 `NOTION_TOKEN`이라는 Repository secret을 등록합니다. 로컬 `.env`와 토큰은 코드에 커밋하지 않습니다. 저장소 기본 브랜치 `main`에 워크플로와 Notion 저장 코드가 있어야 합니다. 기존 Codex 예약은 중단해 두 방식이 동시에 실행되지 않게 합니다.
+
+Actions → Daily job collection → Run workflow에서 수동 실행도 가능합니다. 실행 결과에서 사이트별 집계와 Notion 신규·갱신 수를 확인할 수 있으며, 후보 JSON과 수집 로그는 실행별 artifact로 7일 보관됩니다. 전체 `.env`나 인증 정보는 업로드하지 않습니다. 동시 실행은 큐로 직렬화하며 실행 중인 작업을 강제로 취소하지 않습니다.
+
+실패한 실행은 Actions 화면에서 확인할 수 있습니다. 알림 수신 여부는 GitHub 계정의 Actions 알림 설정을 따릅니다. 저장 도중 실패했으면 artifact의 `postings.json`을 내려받아 기존 `notion_sync.py --input` 명령으로 재처리할 수 있습니다. 같은 수집 키는 기존 행을 갱신합니다. 관심 공고가 0건이면 정상 종료하며 테스트 행을 만들지 않습니다.
+
+예약 관련 동작: [GitHub 공식 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).
+
 신입이 지원할 수 있는 반도체, AX, 반도체 × AX 공고를 찾아 노션에 모으는 개인 프로젝트입니다.
 
 8개 주소의 접속 상태를 확인하거나 R&D잡 1~5페이지를 분류할 수 있습니다. 같은 공고 번호가 반복되면 한 번만 처리합니다. 관심 공고는 회사명, 분야, 제목, 근거, 상세 링크 순으로 출력하고, 제외된 공고는 마지막 집계에 건수로 표시합니다.
@@ -39,3 +51,54 @@ python -m playwright install chromium
 ```
 
 루핏은 `python fetch_page.py --loofit`으로 실행합니다. 두 사이트를 연속해서 확인하려면 `python fetch_page.py --rndjob --loofit`을 사용합니다.
+
+## Notion 수집함에 저장
+
+기존 [채용공고 수집함](https://app.notion.com/p/41d92822e1098190868cd93820c1c8ce)에 관심 공고만 저장합니다. 회사 열을 앞에 둔 기존 표 구성을 사용하며, 직무명·회사·공고 링크·관심 분야·확인된 마감일·판단 근거·출처·수집 키를 기록합니다. 새 공고의 지원 상태는 `검토 전`입니다.
+
+같은 사이트의 개별 공고 ID로 재실행 시 기존 행을 갱신합니다. 제목이 바뀌어도 ID가 같으면 갱신하며, 사이트가 다를 때는 회사·직무명·지원 URL이 모두 일치할 때만 합칩니다. 출처별 수집 키를 함께 보관합니다. URL에 추적용 `utm_*`, `fbclid`, `gclid`만 다른 경우는 동일하게 처리합니다. 다른 링크나 다른 제목으로 올라온 공고는 자동으로 같은 채용이라고 추정하지 않습니다. 동시에 여러 수집 프로세스를 실행하지 마세요. 조회와 생성은 하나의 원자적 연산이 아닙니다.
+
+갱신할 때 기존 `지원 준비` 등의 지원 상태와 페이지 본문 메모는 보존합니다. 마감일은 `마감일: 2026.12.01`처럼 연도를 포함한 명확한 표시만 추출합니다. 연도 없는 날짜·상시채용·미확인 마감일은 추정하지 않으며, 이번에 읽지 못한 날짜로 기존 값을 지우지 않습니다. 루핏에 기업 지원 링크가 없으면 링크를 비워 두고 공고 ID로 중복을 확인합니다. 공용 목록 URL을 개별 공고 링크로 저장하지 않습니다.
+
+### 연결된 Notion 도구로 사용할 때
+
+토큰 없이 수집 후보 파일을 만들 수 있습니다.
+
+```sh
+.venv/bin/python -u fetch_page.py --rndjob --loofit --output postings.json
+```
+
+Codex에서 “postings.json의 관심 공고를 기존 노션 수집함에 저장해줘”라고 요청하면 연결된 Notion 도구로 처리할 수 있습니다. 이 명령 자체는 파일만 만들며 Notion에 쓰지 않습니다. 파일에는 선택된 공고만 들어갑니다. 0건일 때는 빈 목록이며 저장할 행이 없습니다.
+
+### 터미널에서 직접 저장할 때: 최초 한 번 연결
+
+프로젝트의 `.env` 파일에 `NOTION_TOKEN=발급받은토큰`을 입력하고 저장하면 프로그램이 자동으로 읽습니다. `.env`는 Git에서 제외됩니다. 이미 터미널에 `NOTION_TOKEN`을 설정했다면 그 값이 우선하므로, `.env` 값으로 바꾸려면 `unset NOTION_TOKEN`을 실행하세요. `.env` 사용 시 아래의 `read`와 `export` 단계는 생략하고 수집 명령만 실행하면 됩니다.
+
+Codex의 Notion 연결 인증은 로컬 Python 프로세스와 공유되지 않습니다. Python에서 직접 저장하려면 [Notion 연결 관리](https://app.notion.com/developers/connections)에서 읽기·삽입·수정 권한을 가진 연결을 만들고, 채용공고 수집함 페이지의 연결 메뉴에서 그 연결을 추가합니다. 토큰은 채팅이나 코드에 넣지 않습니다.
+
+macOS의 VS Code 터미널(zsh)에서 다음 명령으로 토큰을 숨김 입력합니다. `export`까지 실행한 뒤 같은 터미널에서 수집합니다. 터미널을 새로 열면 다시 입력합니다.
+
+```sh
+read -s 'NOTION_TOKEN?Notion 연결 토큰: '
+export NOTION_TOKEN
+.venv/bin/python -u fetch_page.py --rndjob --loofit --notion
+```
+
+기본 데이터 소스 ID는 기존 수집함의 `41d92822-e109-819f-afd2-000b9d895be1`입니다. 다른 수집함을 쓸 때만 환경변수 `NOTION_DATA_SOURCE_ID`로 바꿉니다. 필요한 열/옵션은 쓰기 전에 검사하며, 스키마가 다르면 중단합니다. 이 프로그램은 스키마를 자동 변경하지 않습니다.
+
+### 미리 보기와 저장 재시도
+
+```sh
+# 토큰 없이 수집·분류 및 JSON 결과 확인. Notion에 쓰지 않습니다.
+.venv/bin/python -u fetch_page.py --rndjob --loofit --notion --dry-run --output postings.json
+
+# 저장 오류 후 보관한 결과만 다시 저장 (NOTION_TOKEN 필요)
+.venv/bin/python notion_sync.py --input postings.json
+
+# 저장·중복·오류 처리 테스트 (실제 Notion에 쓰지 않음)
+.venv/bin/python -m unittest -v test_notion_sync
+```
+
+`--notion`은 쓰기 전에 수집 결과를 `postings.json` 또는 `--output`으로 지정한 파일에 보관합니다. 일부 저장 후 실패하면 명령이 실패 코드로 끝나며, 재실행 시 수집 키를 먼저 조회합니다. 서버 반영 여부가 불분명한 생성 요청은 자동으로 반복하지 않습니다. 429 응답은 `Retry-After`를 따라 제한된 횟수로 재시도합니다. 같은 공고가 기존 수집함에 여러 행으로 발견되면 임의로 고르거나 삭제하지 않고 중단합니다.
+
+구현은 Notion 공식 API의 [데이터 소스 조회](https://developers.notion.com/reference/query-a-data-source), [페이지 생성](https://developers.notion.com/reference/post-page), [페이지 갱신](https://developers.notion.com/reference/patch-page)을 사용합니다. API 버전은 `2026-03-11`로 고정합니다.
