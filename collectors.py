@@ -6,6 +6,8 @@ import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from http.cookiejar import CookieJar
+from urllib.error import HTTPError, URLError
+from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, urlencode, unquote_plus, urljoin, urlsplit
 from urllib.request import Request, build_opener, HTTPCookieProcessor
 
@@ -28,9 +30,10 @@ class CollectionError(RuntimeError):
 
 
 class PublicReader:
-    def __init__(self):
+    def __init__(self, interval=0.5):
         self.opener = build_opener(HTTPCookieProcessor(CookieJar()))
         self.cache = {}
+        self.interval = interval
 
     def read(self, url, data=None, referer=None):
         key = (url, data)
@@ -39,10 +42,27 @@ class PublicReader:
         headers = {"User-Agent": "Mozilla/5.0", "Accept-Language": "ko-KR,ko;q=0.9"}
         if referer:
             headers.update({"Referer": referer, "X-Requested-With": "XMLHttpRequest"})
-        time.sleep(0.2)
-        with self.opener.open(Request(url, data=data, headers=headers), timeout=25) as response:
-            raw = response.read()
-            charset = response.headers.get_content_charset() or "utf-8"
+        for attempt in range(4):
+            time.sleep(self.interval)
+            try:
+                with self.opener.open(Request(url, data=data, headers=headers), timeout=25) as response:
+                    raw = response.read()
+                    charset = response.headers.get_content_charset() or "utf-8"
+                break
+            except HTTPError as error:
+                if error.code not in {429, 502, 503, 504} or attempt == 3:
+                    raise
+                retry = error.headers.get("Retry-After")
+                try:
+                    delay = float(retry) if retry else 5 * (2 ** attempt)
+                except ValueError:
+                    try:
+                        delay = (parsedate_to_datetime(retry) - datetime.now(timezone.utc)).total_seconds()
+                    except (ValueError, TypeError):
+                        delay = 5 * (2 ** attempt)
+                if delay > 60:
+                    raise CollectionError("서버 요청 대기시간이 60초를 초과해 이번 공고는 다음 실행으로 넘김") from None
+                time.sleep(max(1, delay))
         text = raw.decode(charset, errors="replace")
         self.cache[key] = text
         return text
@@ -223,7 +243,7 @@ class JobkoreaBrowser:
 
 def collect_site(key, limit=50):
     name, url = NEW_SITES[key]
-    reader = PublicReader()
+    reader = PublicReader(interval=1.5 if key == "catch" else 0.5)
     counts, failures = Counter(), []
     postings, audit, seen = [], [], set()
     browser = None

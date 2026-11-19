@@ -1,12 +1,14 @@
 import io
 import json
+from email.message import Message
+from urllib.error import HTTPError
 import unittest
 from contextlib import redirect_stdout
 from unittest.mock import patch
 
 from bs4 import BeautifulSoup
 from collectors import (classify_body, collect_site, iso_deadline, job_schema,
-                        labelled, listing_cards, qualification, scoped_body)
+                        labelled, listing_cards, qualification, scoped_body, PublicReader)
 
 
 def soup(html):
@@ -73,6 +75,19 @@ class ParserTests(unittest.TestCase):
         self.assertEqual(postings, [])
         self.assertEqual(report["status"], "failed")
         self.assertTrue(report["failures"])
+
+    def test_public_reader_obeys_retry_after_and_caches_response(self):
+        reader = PublicReader(interval=0)
+        headers = Message()
+        headers['Retry-After'] = '2'
+        limited = HTTPError('https://example.com', 429, 'limited', headers, io.BytesIO())
+        response = io.BytesIO(b'ok')
+        response.headers = Message()
+        with patch.object(reader.opener, 'open', side_effect=[limited, response]) as request, patch('collectors.time.sleep') as sleep:
+            self.assertEqual(reader.read('https://example.com'), 'ok')
+            self.assertEqual(reader.read('https://example.com'), 'ok')
+            self.assertEqual(request.call_count, 2)
+            self.assertIn(unittest.mock.call(2), sleep.call_args_list)
 
     def test_catch_public_list_filters_training_products_and_repeated_ids(self):
         items = [{"RecruitID": 1, "RecruitTitle": "개발 경력", "CompName": "회사", "CareerGubunCode": "경력"},
