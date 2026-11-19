@@ -75,7 +75,8 @@ def image_bytes(url, base_url):
 
 def tesseract_lines(path, width, height):
     result = subprocess.run(["tesseract", str(path), "stdout", "-l", "kor+eng", "--psm", "3", "tsv"],
-                            capture_output=True, text=True, timeout=90)
+                            capture_output=True, text=True, timeout=90,
+                            env={**os.environ, "OMP_THREAD_LIMIT": "1"})
     if result.returncode:
         raise OCRError("Tesseract 이미지 판독 실패")
     groups = {}
