@@ -1,5 +1,7 @@
 # 채용공고 수집 자동화
 
+[현재 운영 현황과 검증 기록](STATUS.md) · 기준 2026-11-20
+
 ## 매일 자동 실행 — GitHub Actions
 
 `.github/workflows/collect-jobs.yml`은 GitHub 서버에서 매일 한국시간 오전 9시(UTC 00:00)에 수집과 Notion 저장을 실행합니다. 집 컴퓨터와 Codex 앱을 켜 둘 필요가 없습니다. GitHub 예약은 서버 부하에 따라 지연될 수 있으며, 공개 저장소는 60일간 활동이 없으면 예약 실행이 자동 비활성화될 수 있습니다.
