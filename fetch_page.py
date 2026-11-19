@@ -58,7 +58,7 @@ SEMICONDUCTOR = re.compile(
     r"반도체|웨이퍼|포토리소그래피|semiconductor|wafer|(?<![a-z])(?:dram|nand|hbm|finfet)(?![a-z])", re.I
 )
 TECHNICAL_WORK = re.compile(
-    r"설계|개발|공정|제조|소자|장비|패키징|계측|분석|평가|테스트|엔지니어|검사|정비|"
+    r"연구|설계|개발|공정|제조|소자|장비|패키징|계측|분석|평가|테스트|엔지니어|검사|정비|"
     r"셋업|셋팅|세팅|유지보수|수율|품질|식각|증착|기술지원|불량|예측|이상탐지|engineer|process", re.I
 )
 AI_TECH = re.compile(
@@ -67,19 +67,24 @@ AI_TECH = re.compile(
 )
 AI_WORK = re.compile(
     r"모델(?:개발|학습|운영|구축|배포)|구축|도입|구현|학습|파인튜닝|배포|업무자동화|"
+    r"(?:기반|활용|이용|통한|으로).{0,28}(?:자동화|최적화|예측|추천)|"
     r"(?:검색|예측|분류|탐지|분석|추천|에이전트|챗봇|서비스|솔루션|시스템|모델|파이프라인).{0,15}(?:개발|운영)|"
     r"(?:rag|llm|mlops|에이전트|챗봇)(?:기반)?(?:개발|운영)", re.I
 )
 OUTSIDE_WORK = re.compile(
     r"(?:기어|감속기|차체|동력전달장치|액추에이터기구).{0,20}(?:설계|개발)|"
     r"(?:공동주택|토목공사|건축현장).{0,12}(?:시공|감리|품질관리)|"
+    r"(?:문구용?잉크|필기구용?잉크).{0,24}(?:연구|개발|제조|생산)|"
     r"(?:cnc선반조작|밀링가공|용접[·및]?제관|보험영업|매장판매|급여.{0,3}근태관리|전표입력)", re.I
 )
 AMBIGUOUS = re.compile(r"자동화|품질검사|소재|연구보조|연구개발|데이터분석|python|로봇", re.I)
+RESEARCH_WORK = re.compile(r"연구|개발|r\s*&\s*d", re.I)
+# 포괄적인 '제조업', '화학'에는 반도체 소재·장비 업체도 포함될 수 있다.
+OTHER_INDUSTRY = re.compile(r"문구|필기구|완구|의류|봉제|음료|식품|화장품|가구제조")
 INTERESTS = ("반도체", "AX", "반도체×AX")
 
 
-def classify_role(title, duties):
+def classify_role(title, duties, industry=""):
     examples = {}
     outside = unclear = None
     if not duties:
@@ -98,15 +103,23 @@ def classify_role(title, duties):
             outside = line
         if not unclear and AMBIGUOUS.search(compact):
             unclear = line
-    if len(examples) > 1 or (examples and outside):
-        evidence = list(examples.values())
-        if outside:
-            evidence.append(outside)
-        return "검토", "업무 근거 혼재 | " + " / ".join(dict.fromkeys(evidence))
+    # AX 업무는 기업 업종과 별도로 선택한다. 교집합은 같은 업무에 두 근거가 있을 때만 선택한다.
+    if "AX" in examples:
+        return "AX", examples["AX"]
+    if examples and outside:
+        return "검토", "업무 근거 혼재 | " + " / ".join(dict.fromkeys([examples["반도체"], outside]))
     if examples:
         return next(iter(examples.items()))
     if outside:
         return "직무 제외", outside
+    research = next((line for line in [*duties, title] if RESEARCH_WORK.search(line)), None)
+    if research and industry:
+        sector = "".join(industry.split())
+        evidence = f"업종: {industry} | {research}"
+        if SEMICONDUCTOR.search(sector) and not OTHER_INDUSTRY.search(sector):
+            return "반도체", evidence
+        if OTHER_INDUSTRY.search(sector) and not SEMICONDUCTOR.search(sector):
+            return "직무 제외", evidence
     return "검토", "관심 분야 근거 부족 | " + (unclear or duties[0])
 
 
@@ -131,7 +144,14 @@ def classify_detail(detail, title):
             return "자격 제외", next((line for line in lines if excluded_qualification(line)), name)
         if name in {"담당업무", "주요업무", "직무내용", "직무소개"}:
             duties.extend(line.strip() for line in lines if line.strip())
-    return classify_role(title, duties)
+    industry = ""
+    for label in detail.select("dt, th"):
+        if "".join(label.stripped_strings).replace(" ", "") in {"산업(업종)", "산업", "업종"}:
+            value = label.find_next_sibling(["dd", "td"])
+            if value:
+                industry = value.get_text(" ", strip=True)
+                break
+    return classify_role(title, duties, industry)
 
 
 def classify_card(card, listing_url):
