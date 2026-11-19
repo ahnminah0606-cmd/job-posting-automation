@@ -35,9 +35,17 @@ class ParserTests(unittest.TestCase):
     def test_qualification_preserves_strict_user_rules(self):
         self.assertIsNone(qualification("반도체 공정 개발", "신입", "대졸"))
         self.assertIsNone(qualification("반도체 공정 개발", "무관", "학력무관"))
-        for career in ("경력무관", "신입/경력", "경력 3년", ""):
+        for career in ("경력무관", "경력 3년", ""):
             self.assertEqual(qualification("개발", career)[0], "자격 제외")
         self.assertEqual(qualification("개발 석사 우대", "신입")[0], "자격 제외")
+
+    def test_mixed_entry_and_experienced_recruitment_is_allowed(self):
+        from fetch_page import excluded_qualification
+        for career in ('신입/경력', '신입 및 경력', '신입 · 경력', '경력/신입', '신입사원 및 경력사원'):
+            self.assertIsNone(qualification('AI 서비스 개발 ' + career, career), career)
+            self.assertIsNone(excluded_qualification(career), career)
+        self.assertIsNotNone(excluded_qualification('신입/경력 채용. 석사 우대'))
+        self.assertIsNotNone(excluded_qualification('신입/경력 채용. 해당 직무 경력 3년 필수'))
 
     def test_image_only_and_missing_duties_are_not_candidates(self):
         self.assertEqual(classify_body("반도체 개발 신입", '<img src="jd.png">')[0], "수집 제외")

@@ -54,6 +54,9 @@ EXCLUDED_QUALIFICATION = re.compile(
 def excluded_qualification(text):
     # 한글 공고에는 '경 력', '석 · 박사'처럼 글자 사이에 공백이 들어가기도 한다.
     compact = re.sub(r"(?<=[가-힣·ㆍ/･・-])\s+(?=[가-힣·ㆍ/･・-])", "", text)
+    # 신입도 지원 가능한 혼합 모집 표기는 경력 전용 모집과 구분한다.
+    compact = re.sub(r"신입(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*경력(?:사원|직)?", "신입", compact)
+    compact = re.sub(r"경력(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*신입(?:사원|직)?", "신입", compact)
     return EXCLUDED_QUALIFICATION.search(compact)
 
 
@@ -278,7 +281,7 @@ def read_loofit_card(page, card, title, description):
             return "자격 제외", value, ""
     # '학력무관'이나 근무지역의 '무관'을 채용형태로 오인하지 않는다.
     parts = re.split(r"\s*/\s*", description)
-    if len(parts) < 4 or parts[-2] not in {"신입", "무관"}:
+    if len(parts) < 4 or not (any("신입" in part for part in parts[2:-1]) or parts[-2] == "무관"):
         return "자격 제외", "신입 지원 근거 부족", ""
     modal = page.locator("#detail_modal:visible")
     try:
