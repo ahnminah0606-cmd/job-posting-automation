@@ -140,3 +140,9 @@ class SharedPosterTests(unittest.TestCase):
         html = self.html().replace('공통 사항', '기타 사항').replace('공통 자격 요건', '별도 안내')
         roles = egong_roles('AI 및 네트워크 등 채용형 인턴 채용', html, 'https://example.org')
         self.assertEqual(roles[0][1][0], '수집 제외')
+
+class ReadingOrderTests(unittest.TestCase):
+    def test_same_row_label_precedes_value_despite_font_height(self):
+        from ocr import reading_order
+        lines = [dict(text='신입',x=.3,y=.195,height=.04),dict(text='지원자격',x=.05,y=.20,height=.03),dict(text='담당업무',x=.05,y=.25,height=.03)]
+        self.assertEqual([line['text'] for line in reading_order(lines)], ['지원자격','신입','담당업무'])

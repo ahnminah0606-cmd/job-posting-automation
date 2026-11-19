@@ -49,16 +49,15 @@ jobs:
       - name: Restore OCR results
         uses: actions/cache@v5
         with:
-          path: .cache/ocr/*.json
+          path: |
+            .cache/ocr/*.json
+            .cache/ocr/models/
           key: ${{ runner.os }}-ocr-${{ hashFiles('ocr.py', 'requirements.txt') }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             ${{ runner.os }}-ocr-${{ hashFiles('ocr.py', 'requirements.txt') }}-
 
-      - name: Install Korean and English OCR
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng
-          python -c "from ocr import check_engine; print(check_engine())"
+      - name: Prepare Korean and English OCR
+        run: python -c "from ocr import check_engine; print(check_engine())"
 
       - name: Run parser, storage and OCR tests
         env:

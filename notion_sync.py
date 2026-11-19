@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import re
+import unicodedata
 import time
 from datetime import date
 from pathlib import Path
@@ -71,6 +72,10 @@ def rich_text(value):
         raise ValueError("저장할 텍스트가 너무 깁니다.")
     return [{"type": "text", "text": {"content": value[i:i + 2000]}}
             for i in range(0, len(value), 2000)]
+
+
+def normalized_title(value):
+    return re.sub(r"\s+", "", unicodedata.normalize("NFKC", value)).casefold()
 
 
 def property_text(properties, name):
@@ -160,7 +165,7 @@ class NotionClient:
         for row in rows:
             props = row["properties"]
             if (property_text(props, "회사") != posting["company"]
-                    or property_text(props, "직무명") != posting["title"]):
+                    or normalized_title(property_text(props, "직무명")) != normalized_title(posting["title"])):
                 continue
             # 회사·직무가 같고 링크도 같으면 같은 행이다. 추가 속성 열은 필요 없다.
             old_url = props.get("공고 링크", {}).get("url") or ""

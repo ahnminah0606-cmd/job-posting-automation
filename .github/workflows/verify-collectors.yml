@@ -24,8 +24,7 @@ jobs:
       - name: Install Python and OCR dependencies
         run: |
           python -m pip install -r requirements.txt
-          sudo apt-get update
-          sudo apt-get install -y tesseract-ocr tesseract-ocr-kor tesseract-ocr-eng
+          python -c "from ocr import check_engine; print(check_engine())"
       - name: Run parser, storage and actual OCR tests
         run: python -m unittest discover -v
       - name: Verify public Jobkorea images without Notion writes

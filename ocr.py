@@ -1,17 +1,12 @@
 """채용 상세 이미지의 한국어/영어 OCR. 이미지나 토큰을 외부 AI 서비스에 보내지 않는다."""
 
 import base64
-import csv
 import hashlib
 from functools import lru_cache
 import html as html_module
 import io
 import json
-import os
-import platform
 import re
-import shutil
-import subprocess
 import tempfile
 from pathlib import Path
 from urllib.parse import urljoin, urlsplit
@@ -21,7 +16,7 @@ from bs4 import BeautifulSoup
 from PIL import Image, ImageOps
 
 CACHE = Path(__file__).with_name(".cache") / "ocr"
-VERSION = "v2"
+VERSION = "v4"
 EVENTS = []
 
 
@@ -36,22 +31,36 @@ class OCRError(RuntimeError):
 
 
 def engine():
-    if shutil.which("tesseract"):
-        return "tesseract"
-    if platform.system() == "Darwin" and shutil.which("clang"):
-        return "vision"
-    raise OCRError("OCR 엔진 없음: Tesseract와 한국어·영어 언어 데이터를 설치하세요.")
+    return "rapidocr-ppocrv5-korean"
+
+
+@lru_cache(maxsize=1)
+def prepare_engine():
+    from rapidocr import RapidOCR, EngineType, ModelType, OCRVersion
+    CACHE.mkdir(parents=True, exist_ok=True)
+    try:
+        return RapidOCR(params={
+            "Det.engine_type": EngineType.ONNXRUNTIME,
+            "Det.ocr_version": OCRVersion.PPOCRV4,
+            "Det.model_type": ModelType.MOBILE,
+            "Rec.engine_type": EngineType.ONNXRUNTIME,
+            "Rec.lang_type": "korean",
+            "Rec.ocr_version": OCRVersion.PPOCRV5,
+            "Rec.model_type": ModelType.MOBILE,
+            "Global.model_root_dir": str((CACHE / "models").resolve()),
+            "Global.log_level": "warning",
+            "Global.use_cls": False,
+            "Global.max_side_len": 3000,
+            "EngineConfig.onnxruntime.intra_op_num_threads": 1,
+            "EngineConfig.onnxruntime.inter_op_num_threads": 1,
+        })
+    except Exception as error:
+        raise OCRError("한국어 OCR 모델 준비 실패: " + type(error).__name__) from None
 
 
 def check_engine():
-    name = engine()
-    if name == "tesseract":
-        result = subprocess.run(["tesseract", "--list-langs"], capture_output=True, text=True, timeout=15)
-        if result.returncode or not {"kor", "eng"} <= set(result.stdout.split()):
-            raise OCRError("Tesseract의 kor·eng 언어 데이터가 필요합니다.")
-    if name == "vision":
-        prepare_vision()
-    return name
+    prepare_engine()
+    return engine()
 
 
 @lru_cache(maxsize=32)
@@ -73,52 +82,31 @@ def image_bytes(url, base_url):
     return raw
 
 
-def tesseract_lines(path, width, height):
-    result = subprocess.run(["tesseract", str(path), "stdout", "-l", "kor+eng", "--psm", "3", "tsv"],
-                            capture_output=True, text=True, timeout=90,
-                            env={**os.environ, "OMP_THREAD_LIMIT": "1"})
-    if result.returncode:
-        raise OCRError("Tesseract 이미지 판독 실패")
-    groups = {}
-    for row in csv.DictReader(io.StringIO(result.stdout), delimiter="\t"):
-        value = (row.get("text") or "").strip()
-        if row.get("level") != "5" or not value or float(row["conf"]) < 0:
-            continue
-        key = (row["block_num"], row["par_num"], row["line_num"])
-        groups.setdefault(key, []).append(row)
+def recognize_lines(path, width, height):
+    result = prepare_engine()(str(path))
+    if result.txts is None or result.boxes is None:
+        return []
     lines = []
-    for words in groups.values():
-        x, y = min(int(w["left"]) for w in words), min(int(w["top"]) for w in words)
-        right = max(int(w["left"]) + int(w["width"]) for w in words)
-        bottom = max(int(w["top"]) + int(w["height"]) for w in words)
-        lines.append(dict(text=" ".join(w["text"] for w in words),
-                          confidence=sum(float(w["conf"]) for w in words) / (100 * len(words)),
-                          x=x / width, y=y / height, width=(right - x) / width, height=(bottom - y) / height))
+    for box, value, confidence in zip(result.boxes, result.txts, result.scores):
+        xs, ys = box[:, 0], box[:, 1]
+        lines.append(dict(text=value, confidence=float(confidence),
+                          x=float(min(xs)) / width, y=float(min(ys)) / height,
+                          width=float(max(xs) - min(xs)) / width,
+                          height=float(max(ys) - min(ys)) / height))
     return lines
 
 
-def prepare_vision():
-    CACHE.mkdir(parents=True, exist_ok=True)
-    source = Path(__file__).with_name("macos_ocr.m")
-    digest = hashlib.sha256(source.read_bytes()).hexdigest()[:12]
-    binary = CACHE / ("vision-" + digest)
-    if not binary.exists():
-        pending = binary.with_suffix("." + str(os.getpid()) + ".tmp")
-        result = subprocess.run(["clang", "-fobjc-arc", "-fno-modules", "-framework", "Foundation",
-                                 "-framework", "Vision", "-framework", "CoreGraphics", str(source),
-                                 "-o", str(pending)], capture_output=True, text=True, timeout=60)
-        if result.returncode:
-            raise OCRError("macOS OCR 엔진 준비 실패")
-        pending.replace(binary)
-    return binary
-
-
-def vision_lines(path):
-    binary = prepare_vision()
-    result = subprocess.run([str(binary), str(path)], capture_output=True, text=True, timeout=90)
-    if result.returncode:
-        raise OCRError("macOS 이미지 판독 실패")
-    return json.loads(result.stdout)
+def reading_order(lines):
+    """같은 행의 왼쪽 항목명→오른쪽 값을 읽고 다음 행으로 이동한다."""
+    rows = []
+    for line in sorted(lines, key=lambda item: item["y"] + item["height"] / 2):
+        center = line["y"] + line["height"] / 2
+        if rows and abs(center - rows[-1][0]) <= min(line["height"], rows[-1][1]) * .55:
+            rows[-1][2].append(line)
+            rows[-1][1] = min(rows[-1][1], line["height"])
+        else:
+            rows.append([center, line["height"], [line]])
+    return [line for _, _, row in rows for line in sorted(row, key=lambda item: item["x"])]
 
 
 def recognize(raw):
@@ -154,15 +142,15 @@ def recognize(raw):
             part = image.crop((0, top, image.width, bottom))
             path = Path(tmp) / f"{top}.png"
             part.save(path)
-            chunk = tesseract_lines(path, part.width, part.height) if name == "tesseract" else vision_lines(path)
+            chunk = recognize_lines(path, part.width, part.height)
             for line in chunk:
                 line["y"] = (top + line["y"] * part.height) / image.height
                 line["height"] = line["height"] * part.height / image.height
-                if not any(line["text"] == old["text"] and abs(line["y"] - old["y"]) < .015 for old in lines):
+                if not any(line["text"] == old["text"] and abs(line["y"] - old["y"]) < max(line["height"], old["height"]) * .8 and abs(line["x"] - old["x"]) < .03 for old in lines):
                     lines.append(line)
             if bottom == image.height:
                 break
-    lines.sort(key=lambda line: (round(line["y"], 2), line["x"]))
+    lines = reading_order(lines)
     value = "\n".join(line["text"] for line in lines)
     confidence = sum(line["confidence"] * len(line["text"]) for line in lines) / max(1, sum(len(line["text"]) for line in lines))
     document = dict(text=value, confidence=confidence, lines=lines, engine=name, key=key)

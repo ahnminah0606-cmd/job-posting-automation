@@ -156,3 +156,12 @@ class SyncTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class OCRTitleDedupTests(unittest.TestCase):
+    def test_ocr_spacing_and_character_width_update_existing_role(self):
+        client = MemoryNotion()
+        self.assertEqual(client.upsert(posting(title='반도체 IP 검증 Engineer (신입)'))[0], '신규')
+        self.assertEqual(client.upsert(posting(title='반도체 ＩＰ 검증 engineer(신입)'))[0], '갱신')
+        self.assertEqual(len(client.rows), 1)
+        self.assertEqual(client.upsert(posting(title='반도체 IP 설계 engineer(신입)'))[0], '신규')
+        self.assertEqual(len(client.rows), 2)
