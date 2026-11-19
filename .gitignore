@@ -7,3 +7,4 @@ __pycache__/
 postings*.json
 collection.log
 collection-report*.json
+.cache/

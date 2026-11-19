@@ -1,4 +1,4 @@
-"""공개 채용 목록/상세 어댑터. 로그인·이미지 OCR·추천 문구는 판정에 사용하지 않는다."""
+"""공개 채용 목록/상세 어댑터. 로그인·추천 문구는 판정에 사용하지 않으며 상세 이미지는 OCR로 판독한다."""
 
 import json
 import re
@@ -13,6 +13,7 @@ from urllib.request import Request, build_opener, HTTPCookieProcessor
 
 from bs4 import BeautifulSoup
 from notion_sync import make_posting, deadline_from_text
+from ocr import enrich_html, scope_ocr_role, OCRError
 
 
 NEW_SITES = {
@@ -126,7 +127,11 @@ def qualification(title, career, education=""):
     return None
 
 
-def classify_body(title, html, industry=""):
+def classify_body(title, html, industry="", base_url=""):
+    try:
+        html = enrich_html(html, base_url)
+    except OCRError as error:
+        return "수집 제외", str(error)
     from fetch_page import classify_loofit_jd
     if re.search(r"각\s*(?:부문|직무|분야)|부문별|직무별|전\s*직군|인재풀", title):
         return "수집 제외", "여러 직무를 묶은 공고: 직무별 본문 분리 확인 필요"
@@ -209,7 +214,7 @@ def saramin_detail(reader, card):
         raise CollectionError("사람인 상세요강 iframe 없음")
     html = reader.read(urljoin(base, frame["src"]), referer=card["url"])
     deadline = deadline_from_text("마감일 " + labelled(soup, "마감일"))
-    return company, title, classify_body(title, html, labelled(soup, "업종")), deadline
+    return company, title, classify_body(title, html, labelled(soup, "업종"), urljoin(base, frame["src"])), deadline
 
 
 class JobkoreaBrowser:
@@ -232,7 +237,7 @@ class JobkoreaBrowser:
             try:
                 frame.locator("body").wait_for(timeout=10000)
                 html = frame.content()
-                if text(BeautifulSoup(html, "html.parser")):
+                if text(BeautifulSoup(html, "html.parser")) or BeautifulSoup(html, "html.parser").select_one("img[src],img[data-src]"):
                     chunks.append(html)
             except Exception:
                 continue
@@ -336,7 +341,7 @@ def collect_site(key, limit=50):
                 if not decision:
                     if browser is None:
                         browser = JobkoreaBrowser().__enter__()
-                    decision = classify_body(title, browser.body(card["url"]))
+                    decision = classify_body(title, browser.body(card["url"]), base_url=card["url"])
             elif key == "catch":
                 soup = reader.soup(card["url"])
                 schema = next(job_schema(soup), None)
@@ -358,7 +363,7 @@ def collect_site(key, limit=50):
                 if view.get("is_secret") == "y":
                     raise CollectionError("비공개 공고")
                 company, title, deadline = card["company"], card["title"], None
-                decision = classify_body(title, unquote_plus(view.get("content", "")))
+                decision = classify_body(title, unquote_plus(view.get("content", "")), base_url=card["url"])
             else:
                 raise CollectionError("지원하지 않는 수집기")
             record(card, decision, company, title, deadline)
@@ -402,14 +407,21 @@ def collect_site(key, limit=50):
                         if not roles:
                             raise CollectionError("모집 직무 데이터 없음")
                         html = details.get("content", "")
+                        eligible = [role for role in roles if role.get("division") in {1, 3}]
+                        ocr_error = None
+                        if eligible:
+                            try:
+                                html = enrich_html(html, card["url"])
+                            except OCRError as error:
+                                ocr_error = str(error)
                         for role in roles:
                             # 상세 JSON의 division 1은 화면의 신입, 2는 경력에 대응한다.
                             division = role.get("division")
                             career = "신입" if division == 1 else ("경력" if division == 2 else "신입/경력" if division == 3 else "")
                             title = role.get("field") or card["title"]
                             decision = qualification(card["title"] + " " + title, career)
-                            body = scoped_body(html, title) if len(roles) > 1 else html
-                            decision = decision or classify_body(title, body)
+                            body = (scoped_body(html, title) or scope_ocr_role(html, title, [r.get("field", "") for r in roles])) if len(roles) > 1 else html
+                            decision = decision or (("수집 제외", ocr_error) if ocr_error else classify_body(title, body, base_url=card["url"]))
                             record(card, decision, title=title, deadline=iso_deadline(details.get("end_time")), source_id=f"{item['id']}:{role['id']}")
                     except Exception as error:
                         failures.append(f"자소설 상세 {item['id']}: {type(error).__name__}")
