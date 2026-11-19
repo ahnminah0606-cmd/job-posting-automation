@@ -88,7 +88,7 @@ def classify_role(title, duties, industry=""):
     examples = {}
     outside = unclear = None
     if not duties:
-        return "검토", "담당업무 본문을 확인할 수 없음"
+        return "직무 제외", "담당업무 본문을 확인할 수 없음"
     for line in [*duties, title]:
         compact = "".join(line.split())
         semi = SEMICONDUCTOR.search(compact) and TECHNICAL_WORK.search(compact)
@@ -107,7 +107,7 @@ def classify_role(title, duties, industry=""):
     if "AX" in examples:
         return "AX", examples["AX"]
     if examples and outside:
-        return "검토", "업무 근거 혼재 | " + " / ".join(dict.fromkeys([examples["반도체"], outside]))
+        return "직무 제외", "업무 근거 혼재 | " + " / ".join(dict.fromkeys([examples["반도체"], outside]))
     if examples:
         return next(iter(examples.items()))
     if outside:
@@ -120,7 +120,7 @@ def classify_role(title, duties, industry=""):
             return "반도체", evidence
         if OTHER_INDUSTRY.search(sector) and not SEMICONDUCTOR.search(sector):
             return "직무 제외", evidence
-    return "검토", "관심 분야 근거 부족 | " + (unclear or duties[0])
+    return "직무 제외", "관심 분야 근거 부족 | " + (unclear or duties[0])
 
 
 def classify_detail(detail, title):
@@ -167,14 +167,14 @@ def classify_card(card, listing_url):
         if excluded_qualification(value):
             return company_name, title, url, "자격 제외", value
     if "신입" not in career and career != "무관":
-        return company_name, title, url, "검토", f"모집 구분 확인 필요 | {career or '표시 없음'}"
+        return company_name, title, url, "자격 제외", f"신입 지원 근거 부족 | {career or '표시 없음'}"
     parsed = urlsplit(url)
     if parsed.hostname != urlsplit(listing_url).hostname or parsed.scheme != "https":
-        return company_name, title, "", "검토", "상세 링크 확인 필요"
+        return company_name, title, "", "수집 제외", "유효한 상세 링크 없음"
     try:
         result, evidence = classify_detail(read_rndjob_page(url), title)
     except (URLError, OSError, HTTPException) as error:
-        result, evidence = "검토", f"상세 페이지 접속 실패 | {error}"
+        result, evidence = "수집 제외", f"상세 페이지 접속 실패 | {error}"
     return company_name, title, url, result, evidence
 
 
@@ -195,7 +195,7 @@ def show_rndjob():
         print("목록에서 공고 카드를 읽지 못했습니다. 목록 화면을 확인하세요.")
     selected = sum(counts[key] for key in INTERESTS)
     print(f"첫 페이지 {total}건 | 관심 공고 {selected}건")
-    print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "검토", "직무 제외", "자격 제외")))
+    print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
 
 
 def main():
