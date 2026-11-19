@@ -1,4 +1,4 @@
-"""채용 사이트의 접속을 확인하거나 R&D잡 1~5페이지의 관심 공고를 찾는다."""
+"""채용 사이트의 접속을 확인하거나 R&D잡과 루핏에서 관심 공고를 찾는다."""
 
 import argparse
 import re
@@ -224,10 +224,131 @@ def show_rndjob():
     print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
 
 
+LOOFIT_DUTY = re.compile(r"담당\s*업무|주요\s*업무|수행\s*업무|직무\s*(?:내용|소개)|업무\s*(?:내용|소개)|주요\s*역할")
+LOOFIT_STOP = re.compile(r"지원\s*자격|응시\s*자격|자격\s*(?:요건|사항)|우대\s*(?:사항|조건)|근무\s*(?:조건|시간)|전형\s*(?:절차|일정)|기타사항|모집분야")
+
+
+def classify_loofit_jd(title, html, industry):
+    from bs4 import BeautifulSoup
+
+    body = BeautifulSoup(html, "html.parser")
+    for br in body.select("br"):
+        br.replace_with("\n")
+    # 표 안의 항목명과 값도 줄 단위로 읽는다.
+    for tag in body.select("p, li, div, h1, h2, h3, h4, h5, h6, td, th"):
+        tag.append("\n")
+    lines = [line.strip() for line in body.get_text().splitlines() if line.strip()]
+    duties = []
+    recording = False
+    for line in lines:
+        # 양식의 '신입/경력: 신입'에서 실제 자격 값은 '신입'이다.
+        value = re.sub(r"^\s*(?:신입\s*/\s*)?경력\s*[:：]\s*", "", line)
+        if line not in {"신입/경력", "경력구분"} and excluded_qualification(value):
+            return "자격 제외", line
+        heading = LOOFIT_DUTY.search(line)
+        if heading and heading.start() < 8:
+            recording = True
+            rest = line[heading.end():].lstrip(" ]】:：-")
+            if rest and rest not in {"및 역할", "및 책임"}:
+                duties.append(rest)
+        elif LOOFIT_STOP.search(line[:15]):
+            recording = False
+        elif recording:
+            duties.append(line)
+    if not any(line != "상세요강" for line in lines):
+        return "수집 제외", "텍스트 상세요강 없음"
+    return classify_role(title, duties, industry)
+
+
+def read_loofit_card(page, card, title, description):
+    from playwright.sync_api import Error as BrowserError
+
+    for value in (title, description):
+        if excluded_qualification(value):
+            return "자격 제외", value, ""
+    # '학력무관'이나 근무지역의 '무관'을 채용형태로 오인하지 않는다.
+    parts = re.split(r"\s*/\s*", description)
+    if len(parts) < 4 or parts[-2] not in {"신입", "무관"}:
+        return "자격 제외", "신입 지원 근거 부족", ""
+    modal = page.locator("#detail_modal:visible")
+    try:
+        card.get_by_role("button", name="자세히 보기").click()
+        jd = modal.locator("#ds1 .ds_titbox").first
+        jd.wait_for(state="visible")
+        industry = modal.locator(".item").filter(
+            has=page.locator("p.tit", has_text=re.compile(r"^\s*업종\s*$"))
+        ).locator(".desc")
+        sector = industry.first.text_content().strip() if industry.count() else ""
+        result, evidence = classify_loofit_jd(title, jd.inner_html(), sector)
+        apply_link = modal.locator("a.apply_btn[href]")
+        href = apply_link.first.get_attribute("href") if apply_link.count() else ""
+        url = urljoin(page.url, href) if href else ""
+        return result, evidence, url if urlsplit(url).scheme in {"http", "https"} else ""
+    except BrowserError as error:
+        return "수집 제외", f"상세창 읽기 실패 | {str(error).splitlines()[0]}", ""
+    finally:
+        if modal.count():
+            modal.locator(".ed_btn_close:visible").first.click()
+            modal.wait_for(state="hidden")
+
+
+def show_loofit():
+    from playwright.sync_api import Error as BrowserError, sync_playwright
+
+    counts = Counter()
+    seen = set()
+    pages_read = 0
+    try:
+        with sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except BrowserError as error:
+                if "Executable doesn't exist" not in str(error):
+                    raise
+                browser = pw.chromium.launch(channel="chrome")
+            page = browser.new_page()
+            page.set_default_timeout(12000)
+            page.goto(SITES["SKALA 루핏"], wait_until="domcontentloaded")
+            for number in range(1, 6):
+                if number > 1:
+                    target = page.locator(f'.paging .page[data-page="{number}"]')
+                    if not target.count():
+                        break
+                    target.locator("a").click()
+                    page.locator(f'.paging .page.on[data-page="{number}"]').wait_for()
+                cards = page.locator(".joblist > .item")
+                cards.first.wait_for()
+                pages_read += 1
+                for card in cards.all():
+                    bookmark = card.locator(".btnbox .bookmark_btn[id]")
+                    key = bookmark.first.get_attribute("id") if bookmark.count() else None
+                    if key in seen:
+                        continue
+                    if key:
+                        seen.add(key)
+                    title = card.locator(".txtbox .tit").inner_text().strip()
+                    company = card.locator(".logo img").get_attribute("alt") or "회사명 미확인"
+                    description = card.locator(".txtbox .desc").inner_text().strip()
+                    result, evidence, url = read_loofit_card(page, card, title, description)
+                    counts[result] += 1
+                    if result in INTERESTS:
+                        print(f"{company} | {result} | {title}")
+                        print(f"근거: {evidence}")
+                        print(url or f"루핏 목록에서 제목으로 검색: {SITES['SKALA 루핏']}")
+                        print()
+            browser.close()
+    except BrowserError as error:
+        raise SystemExit(f"루핏 수집 중단 | {str(error).splitlines()[0]}") from error
+    print(f"루핏 목록 {pages_read}페이지 | 공고 {sum(counts.values())}건 | 관심 공고 {sum(counts[k] for k in INTERESTS)}건")
+    print(" | ".join(f"{k} {counts[k]}건" for k in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rndjob", action="store_true", help="R&D잡 1~5페이지의 관심 공고와 근거 보기")
-    if parser.parse_args().rndjob:
+    parser.add_argument("--loofit", action="store_true", help="SKALA 루핏 전체 채용정보 1~5페이지 분류")
+    args = parser.parse_args()
+    if args.rndjob:
         try:
             show_rndjob()
         except ModuleNotFoundError as error:
@@ -236,7 +357,14 @@ def main():
             parser.exit(1, "먼저 python -m pip install -r requirements.txt 를 실행하세요.\n")
         except (URLError, OSError, HTTPException) as error:
             parser.exit(1, f"R&D잡 접속 실패 | {error}\n")
-    else:
+    if args.loofit:
+        try:
+            show_loofit()
+        except ModuleNotFoundError as error:
+            if error.name not in {"playwright", "bs4"}:
+                raise
+            parser.exit(1, "python -m pip install -r requirements.txt 실행 후 python -m playwright install chromium 을 실행하세요.\n")
+    if not (args.rndjob or args.loofit):
         check_sites()
 
 

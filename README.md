@@ -26,3 +26,16 @@ python3 -m venv .venv
 ```
 
 Windows에서는 `py -m venv .venv`로 환경을 만들고, 나머지 두 명령의 `.venv/bin/python`을 `.venv\Scripts\python.exe`로 바꾸세요. 두 번째 실행부터는 마지막 명령만 사용합니다.
+
+## SKALA 루핏
+
+루핏의 전체 채용정보 목록에서 최대 5페이지를 확인합니다. 브라우저가 공고의 상세창을 열고 상세요강의 자격과 담당업무에 기존 필터를 적용합니다. 관심 공고에는 회사명과 근거, 화면에 제공된 지원 링크를 표시합니다. 이미지 전용 상세나 읽지 못한 상세창은 수집 제외에 집계합니다.
+
+가상환경을 활성화한 뒤 최초 한 번 준비합니다.
+
+```sh
+python -m pip install -r requirements.txt
+python -m playwright install chromium
+```
+
+루핏은 `python fetch_page.py --loofit`으로 실행합니다. 두 사이트를 연속해서 확인하려면 `python fetch_page.py --rndjob --loofit`을 사용합니다.
