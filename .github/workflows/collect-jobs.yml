@@ -16,7 +16,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 40
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -33,7 +33,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run storage tests
-        run: python -m unittest -v test_notion_sync
+        run: python -m unittest discover -v
 
       - name: Install Chromium and Linux dependencies
         run: python -m playwright install --with-deps chromium
@@ -47,7 +47,7 @@ jobs:
             echo '::error::Add NOTION_TOKEN under repository Settings > Secrets and variables > Actions.'
             exit 1
           fi
-          python -u fetch_page.py --rndjob --loofit --notion --output postings.json | tee collection.log
+          python -u fetch_page.py --all --notion --output postings.json | tee collection.log
 
       - name: Save collection result
         if: always()
@@ -57,5 +57,6 @@ jobs:
           path: |
             postings.json
             collection.log
+            collection-report.json
           if-no-files-found: ignore
           retention-days: 7

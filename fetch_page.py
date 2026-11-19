@@ -359,15 +359,24 @@ def show_loofit():
 
 
 def main():
+    from collectors import NEW_SITES, collect_site
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rndjob", action="store_true", help="R&D잡 1~5페이지의 관심 공고와 근거 보기")
     parser.add_argument("--loofit", action="store_true", help="SKALA 루핏 전체 채용정보 1~5페이지 분류")
     parser.add_argument("--notion", action="store_true", help="관심 공고를 Notion에 저장하거나 기존 행 갱신")
     parser.add_argument("--output", type=Path, help="관심 공고를 JSON 파일로 보관 (재실행/연결 도구용)")
     parser.add_argument("--dry-run", action="store_true", help="저장할 관심 공고를 JSON으로 미리 보기; Notion에 쓰지 않음")
+    parser.add_argument("--all", action="store_true", help="등록된 8개 주소 전체 수집")
+    parser.add_argument("--site", action="append", choices=list(NEW_SITES), default=[], help="추가 사이트 선택 (여러 번 지정 가능)")
+    parser.add_argument("--limit", type=int, default=50, help="추가 사이트별 최대 공고 수 (기본 50, 다직무는 각각 분리)")
+    parser.add_argument("--report", type=Path, default=Path("collection-report.json"), help="사이트별 실행 결과/제외 근거 JSON")
     args = parser.parse_args()
-    if (args.notion or args.output or args.dry_run) and not (args.rndjob or args.loofit):
-        parser.error("저장 옵션에는 --rndjob 또는 --loofit을 함께 지정하세요.")
+    if not 1 <= args.limit <= 200:
+        parser.error("--limit은 1~200이어야 합니다.")
+    requested = args.all or args.rndjob or args.loofit or args.site
+    if (args.notion or args.output or args.dry_run) and not requested:
+        parser.error("저장 옵션에는 --all, --rndjob, --loofit 또는 --site를 지정하세요.")
     client = None
     if args.notion and not args.dry_run:
         try:
@@ -375,40 +384,53 @@ def main():
             client.validate_schema()
         except NotionError as error:
             parser.exit(1, f"{error}\n")
-    postings = []
-    if args.rndjob:
-        try:
-            postings.extend(show_rndjob())
-        except ModuleNotFoundError as error:
-            if error.name != "bs4":
-                raise
-            parser.exit(1, "먼저 python -m pip install -r requirements.txt 를 실행하세요.\n")
-        except (URLError, OSError, HTTPException) as error:
-            parser.exit(1, f"R&D잡 접속 실패 | {error}\n")
-    if args.loofit:
-        try:
-            postings.extend(show_loofit())
-        except ModuleNotFoundError as error:
-            if error.name not in {"playwright", "bs4"}:
-                raise
-            parser.exit(1, "python -m pip install -r requirements.txt 실행 후 python -m playwright install chromium 을 실행하세요.\n")
-    if not (args.rndjob or args.loofit):
+    if not requested:
         check_sites()
-    if args.output:
-        args.output.write_text(json.dumps(postings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        print(f"관심 공고 {len(postings)}건 보관: {args.output}")
+        return
+    tasks = []
+    if args.all or args.rndjob:
+        tasks.append(("R&D잡", show_rndjob))
+    if args.all or args.loofit:
+        tasks.append(("SKALA 루핏", show_loofit))
+    keys = list(NEW_SITES) if args.all else list(dict.fromkeys(args.site))
+    for key in keys:
+        tasks.append((NEW_SITES[key][0], lambda key=key: collect_site(key, args.limit)))
+    postings, reports = [], []
+    output = args.output or (Path("postings.json") if args.notion else None)
+    for name, collect in tasks:
+        print(f"\n=== {name} 수집 시작 ===", flush=True)
+        try:
+            value = collect()
+            if isinstance(value, tuple):
+                selected, report = value
+            else:
+                selected, report = value, dict(site=name, status="success", selected=len(value), failures=[])
+        except (Exception, SystemExit) as error:
+            selected = []
+            report = dict(site=name, status="failed", failures=[str(error)])
+            print(f"{name} | 수집 실패: {error}", flush=True)
+        postings.extend(selected)
+        # 각 사이트 처리 후 후보와 보고서를 보관하고, 다른 사이트 오류와 독립적으로 저장한다.
+        if output:
+            output.write_text(json.dumps(postings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        if args.notion and not args.dry_run:
+            try:
+                save_postings(selected, client)
+            except (NotionError, ValueError) as error:
+                report["status"] = "failed"
+                report.setdefault("failures", []).append(str(error))
+                print(f"{name} | Notion 저장 실패: {error}", flush=True)
+        reports.append(report)
+        args.report.write_text(json.dumps(reports, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    if output:
+        print(f"관심 공고 {len(postings)}건 보관: {output}")
     if args.dry_run:
         print(json.dumps(postings, ensure_ascii=False, indent=2))
         print("미리 보기 완료 | Notion 쓰기 없음")
-    elif args.notion:
-        # 수집 결과는 쓰기 실패 전에 파일로 남겨 재수집 없이 복구할 수 있다.
-        backup = args.output or Path("postings.json")
-        if not args.output:
-            backup.write_text(json.dumps(postings, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        try:
-            save_postings(postings, client)
-        except (NotionError, ValueError) as error:
-            parser.exit(1, f"{error}\n수집 결과 보관: {backup}\n")
+    failed = [report["site"] for report in reports if report["status"] == "failed"]
+    print(f"전체 결과 | 사이트 {len(reports)}곳 | 오류 {len(failed)}곳 | 관심 직무 {len(postings)}건 | 보고서 {args.report}", flush=True)
+    if failed:
+        parser.exit(1, "일부 사이트 실패 (정상 사이트 결과는 보관/저장됨): " + ", ".join(failed) + "\n")
 
 
 if __name__ == "__main__":
