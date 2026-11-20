@@ -1,6 +1,7 @@
 import io
 import json
 from email.message import Message
+from http.client import RemoteDisconnected
 from urllib.error import HTTPError
 import unittest
 from contextlib import redirect_stdout
@@ -111,6 +112,14 @@ class ParserTests(unittest.TestCase):
             self.assertEqual(reader.read('https://example.com'), 'ok')
             self.assertEqual(request.call_count, 2)
             self.assertIn(unittest.mock.call(2), sleep.call_args_list)
+
+    def test_public_reader_retries_remote_disconnect(self):
+        reader = PublicReader(interval=0)
+        response = io.BytesIO(b"ok")
+        response.headers = Message()
+        with patch.object(reader.opener, "open", side_effect=[RemoteDisconnected(), response]) as request, patch("collectors.time.sleep"):
+            self.assertEqual(reader.read("https://example.com"), "ok")
+            self.assertEqual(request.call_count, 2)
 
     def test_catch_public_list_filters_training_products_and_repeated_ids(self):
         items = [{"RecruitID": 1, "RecruitTitle": "개발 경력", "CompName": "회사", "CareerGubunCode": "경력"},

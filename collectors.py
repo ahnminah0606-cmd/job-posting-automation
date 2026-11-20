@@ -6,6 +6,7 @@ import time
 from collections import Counter
 from datetime import datetime, timezone, timedelta
 from http.cookiejar import CookieJar
+from http.client import RemoteDisconnected
 from urllib.error import HTTPError
 from email.utils import parsedate_to_datetime
 from urllib.parse import parse_qs, urlencode, unquote_plus, urljoin, urlsplit
@@ -64,6 +65,10 @@ class PublicReader:
                 if delay > 60:
                     raise CollectionError("서버 요청 대기시간이 60초를 초과해 이번 공고는 다음 실행으로 넘김") from None
                 time.sleep(max(1, delay))
+            except RemoteDisconnected:
+                if attempt == 3:
+                    raise
+                time.sleep(5 * (2 ** attempt))
         text = raw.decode(charset, errors="replace")
         self.cache[key] = text
         return text
