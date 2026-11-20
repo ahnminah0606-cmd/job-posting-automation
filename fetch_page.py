@@ -391,7 +391,7 @@ def main():
     parser.add_argument("--notion", action="store_true", help="관심 공고를 Notion에 저장하거나 기존 행 갱신")
     parser.add_argument("--output", type=Path, help="관심 공고를 JSON 파일로 보관 (재실행/연결 도구용)")
     parser.add_argument("--dry-run", action="store_true", help="저장할 관심 공고를 JSON으로 미리 보기; Notion에 쓰지 않음")
-    parser.add_argument("--all", action="store_true", help="캐치를 제외한 7개 주소 수집")
+    parser.add_argument("--all", action="store_true", help="등록된 8개 주소 수집")
     parser.add_argument("--site", action="append", choices=list(NEW_SITES), default=[], help="추가 사이트 선택 (여러 번 지정 가능)")
     parser.add_argument("--limit", type=int, default=50, help="추가 사이트별 최대 공고 수 (기본 50, 다직무는 각각 분리)")
     parser.add_argument("--pages", type=int, default=5, help="페이지 탐색을 지원하는 목록의 최대 페이지 수 (기본 5)")
@@ -415,13 +415,13 @@ def main():
         check_sites()
         return
     from ocr import check_engine, snapshot
-    print(f"OCR 엔진: {check_engine()} | 캐치: 정기 수집 보류", flush=True)
+    print(f"OCR 엔진: {check_engine()}", flush=True)
     tasks = []
     if args.all or args.rndjob:
         tasks.append(("R&D잡", lambda: show_rndjob(args.pages)))
     if args.all or args.loofit:
         tasks.append(("SKALA 루핏", lambda: show_loofit(args.pages)))
-    keys = [key for key in NEW_SITES if key != "catch"] if args.all else list(dict.fromkeys(args.site))
+    keys = NEW_SITES if args.all else dict.fromkeys(args.site)
     for key in keys:
         tasks.append((NEW_SITES[key][0], lambda key=key: collect_site(key, args.limit, args.pages)))
     postings, reports = [], []

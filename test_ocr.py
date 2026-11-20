@@ -51,7 +51,7 @@ if __name__ == '__main__':
     unittest.main()
 
 class ScheduleTests(unittest.TestCase):
-    def test_all_runs_seven_sources_without_catch(self):
+    def test_all_runs_eight_sources_including_catch(self):
         import io
         import tempfile
         from pathlib import Path
@@ -65,7 +65,7 @@ class ScheduleTests(unittest.TestCase):
              patch('collectors.collect_site', return_value=([], {'status': 'success'})) as collect:
             main()
         self.assertEqual([call.args[0] for call in collect.call_args_list],
-                         ['saramin-home', 'saramin-kangso', 'jobkorea', 'jasoseol', 'egong'])
+                         ['saramin-home', 'saramin-kangso', 'jobkorea', 'jasoseol', 'egong', 'catch'])
 
 class EngineTests(unittest.TestCase):
     @unittest.skipUnless(__import__('os').environ.get('OCR_INTEGRATION') == '1', 'OCR engine integration opt-in')

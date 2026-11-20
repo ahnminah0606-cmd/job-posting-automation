@@ -17,7 +17,7 @@
 | 잡코리아 신입 | 정기 수집 대상, 공개 상세요강 프레임 누락 수정 완료 |
 | 자소설닷컴 | 정기 수집 대상 |
 | 이공계모야 | 정기 수집 대상, 이미지의 직무별 분리 지원 |
-| 캐치 | 사용자 요청으로 보류. GitHub 서버의 403 접근 제한으로 예약 대상에서 제외 |
+| 캐치 | 전체 수집에 포함. GitHub 서버에서 접근이 제한되면 사이트별 결과에 표시 |
 
 사람인 홈과 강소기업은 별도 진입 주소다. 전 사이트의 모든 공고를 전수 수집하는 방식은 아니며, 추가 사이트는 기본 최대 50개 공고, 최대 5페이지 범위다. 세부 범위는 [README](https://github.com/ahnminah0606-cmd/job-posting-automation/blob/main/README.md)를 따른다.
 
@@ -87,6 +87,5 @@ OCR_INTEGRATION=1 .venv/bin/python -m unittest discover -v
 - 하루 두 번 GitHub 정기 실행의 성공 여부와 저장 결과 확인.
 - Codex 초안 예약의 적용 시간과 공식 문항·글자 수가 확보된 실제 공고의 초안 저장 검증.
 - 신규 이미지와 제외 사유를 표본 점검하고 필요한 분류 기준 조정.
-- 캐치는 재개 요청 전까지 보류한다.
 
 [Notion 프로젝트 이어하기](https://app.notion.com/p/41d92822e109811cac0fdb6c68b58ffc) · [GitHub 운영 현황](https://github.com/ahnminah0606-cmd/job-posting-automation/blob/main/STATUS.md)

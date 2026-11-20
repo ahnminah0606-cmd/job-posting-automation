@@ -19,6 +19,7 @@ on:
           - jobkorea
           - jasoseol
           - egong
+          - catch
       depth:
         description: '수집 범위 (wide는 이전 목록까지 탐색)'
         type: choice
@@ -91,7 +92,7 @@ jobs:
             all) args=(--all) ;;
             rndjob) args=(--rndjob) ;;
             loofit) args=(--loofit) ;;
-            saramin-home|saramin-kangso|jobkorea|jasoseol|egong) args=(--site "$COLLECTION_SITE") ;;
+            saramin-home|saramin-kangso|jobkorea|jasoseol|egong|catch) args=(--site "$COLLECTION_SITE") ;;
             *) echo '::error::Unknown collection site'; exit 1 ;;
           esac
           case "$COLLECTION_DEPTH" in
