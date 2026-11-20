@@ -4,7 +4,7 @@
 
 ## 매일 자동 실행 — GitHub Actions
 
-`.github/workflows/collect-jobs.yml`은 GitHub 서버에서 매일 한국시간 오전 9시(UTC 00:00)에 수집과 Notion 저장을 실행합니다. 집 컴퓨터와 Codex 앱을 켜 둘 필요가 없습니다. GitHub 예약은 서버 부하에 따라 지연될 수 있으며, 공개 저장소는 60일간 활동이 없으면 예약 실행이 자동 비활성화될 수 있습니다.
+`.github/workflows/collect-jobs.yml`은 GitHub 서버에서 매일 한국시간 오전 9시와 오후 6시(UTC 00:00, 09:00)에 수집과 Notion 저장을 실행합니다. 집 컴퓨터와 Codex 앱을 켜 둘 필요가 없습니다. GitHub 예약은 서버 부하에 따라 지연될 수 있으며, 공개 저장소는 60일간 활동이 없으면 예약 실행이 자동 비활성화될 수 있습니다.
 
 저장소 Settings → Secrets and variables → Actions에 `NOTION_TOKEN`이라는 Repository secret을 등록합니다. 로컬 `.env`와 토큰은 코드에 커밋하지 않습니다. 저장소 기본 브랜치 `main`에 워크플로와 Notion 저장 코드가 있어야 합니다. 기존 Codex 예약은 중단해 두 방식이 동시에 실행되지 않게 합니다.
 

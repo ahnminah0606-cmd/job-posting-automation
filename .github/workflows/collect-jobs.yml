@@ -2,8 +2,8 @@ name: Daily job collection
 
 on:
   schedule:
-    # 00:00 UTC = 09:00 Asia/Seoul, every day.
-    - cron: '0 0 * * *'
+    # 00:00 and 09:00 UTC = 09:00 and 18:00 Asia/Seoul every day.
+    - cron: '0 0,9 * * *'
   workflow_dispatch:
     inputs:
       site:
