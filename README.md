@@ -10,6 +10,10 @@
 
 Actions → Daily job collection → Run workflow에서 수동 실행도 가능합니다. `--all`로 캐치를 제외한 7개 주소를 실행합니다. 실행 결과에서 사이트별 집계와 Notion 신규·갱신 수를 확인할 수 있으며, 후보 JSON·수집 로그·사이트별 판정 보고서는 실행별 artifact로 7일 보관됩니다. 전체 `.env`나 인증 정보는 업로드하지 않습니다. 동시 실행은 큐로 직렬화하며 실행 중인 작업을 강제로 취소하지 않습니다.
 
+이전 공고까지 확인하려면 수동 실행에서 `site: all`, `depth: wide`를 선택합니다. 페이지 탐색을 지원하는 목록은 최대 10페이지, 추가 사이트는 최대 100개 공고까지 봅니다. 사람인과 잡코리아는 연결된 공개 목록에 노출된 범위에서 수집합니다. 로컬에서 같은 범위를 쓰려면 `python fetch_page.py --all --pages 10 --limit 100 --notion`을 실행합니다.
+
+마감일을 확인한 공고 중 한국시간 기준 날짜가 지난 건은 결과와 Notion 저장에서 제외합니다. 날짜가 오늘이거나 마감일 정보가 비어 있는 공고는 기존 분류 조건에 따라 처리합니다.
+
 실패한 실행은 Actions 화면에서 확인할 수 있습니다. 알림 수신 여부는 GitHub 계정의 Actions 알림 설정을 따릅니다. 저장 도중 실패했으면 artifact의 `postings.json`을 내려받아 기존 `notion_sync.py --input` 명령으로 재처리할 수 있습니다. 같은 공고 링크·회사·직무명은 기존 행을 갱신합니다. 관심 공고가 0건이면 정상 종료하며 테스트 행을 만들지 않습니다.
 
 예약 관련 동작: [GitHub 공식 문서](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule).

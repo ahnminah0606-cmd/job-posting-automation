@@ -9,6 +9,7 @@ from unittest.mock import patch
 from bs4 import BeautifulSoup
 from collectors import (classify_body, collect_site, iso_deadline, job_schema,
                         labelled, listing_cards, qualification, scoped_body, PublicReader, catch_cards, CollectionError)
+from fetch_page import open_postings
 
 
 def soup(html):
@@ -16,6 +17,16 @@ def soup(html):
 
 
 class ParserTests(unittest.TestCase):
+    def test_open_postings_keeps_today_future_and_unknown_deadlines(self):
+        past = {"deadline": "2026-11-19"}
+        today = {"deadline": "2026-11-20"}
+        future = {"deadline": "2026-11-21"}
+        unknown = {"deadline": None}
+        self.assertEqual(
+            open_postings([past, today, future, unknown], "2026-11-20"),
+            [today, future, unknown],
+        )
+
     def test_saramin_home_and_theme_share_canonical_id(self):
         home = soup('<li><a href="/zf_user/jobs/relay/pop-view?rec_idx=123"><span class="c_name">회사</span><span class="title">반도체 공정 개발 신입</span></a></li>')
         theme = soup('<div class="box_item"><div class="company_nm">회사</div><a title="반도체 공정 개발 신입" href="/zf_user/jobs/relay/view?rec_idx=123">반도체 공정 개발 신입</a><p class="career">신입</p></div>')

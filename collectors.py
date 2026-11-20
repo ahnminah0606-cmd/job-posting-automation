@@ -317,7 +317,7 @@ class CatchBrowser(JobkoreaBrowser):
         return catch_cards(BeautifulSoup(self.page.content(), "html.parser"))
 
 
-def collect_site(key, limit=50):
+def collect_site(key, limit=50, max_pages=5):
     name, url = NEW_SITES[key]
     reader = PublicReader(interval=1.5 if key == "catch" else 0.5)
     counts, failures, warnings = Counter(), [], []
@@ -412,7 +412,7 @@ def collect_site(key, limit=50):
             for card in cards[:limit]:
                 process(card)
         elif key == "jasoseol":
-            for page in range(1, 6):
+            for page in range(1, max_pages + 1):
                 props = next_props(reader.soup(url + "?page=" + str(page)))
                 queries = props.get("dehydratedState", {}).get("queries", [])
                 query = next((q for q in queries if q.get("queryKey", [None])[0] == "jobSearch"), None)
@@ -459,7 +459,7 @@ def collect_site(key, limit=50):
                 if len(seen) >= limit:
                     break
         elif key in {"catch", "egong"}:
-            for page in range(1, 6):
+            for page in range(1, max_pages + 1):
                 if key == "catch":
                     params = dict(Keyword="", JobCode="", Sido="", Career="", JCode="", Size="", EduLevel="", WorkPosition="", CompID="", GroupCode="", Sort=0, curpage=page, pageSize=30, onRecruitYN="Y", ExceptIDList="")
                     if catch_browser:

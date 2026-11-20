@@ -5,6 +5,7 @@ import json
 import re
 from pathlib import Path
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from http.client import HTTPException
 from urllib.error import URLError
 from urllib.parse import parse_qs, urljoin, urlsplit
@@ -192,13 +193,13 @@ def classify_card(card, listing_url):
     return company_name, title, url, result, evidence
 
 
-def show_rndjob():
+def show_rndjob(max_pages=5):
     listing_url = SITES["R&D잡"]
     counts = Counter()
     seen = set()
     pages_read = 0
     selected_postings = []
-    for page in range(1, 6):
+    for page in range(1, max_pages + 1):
         try:
             page_url = listing_url if page == 1 else (
                 f"{listing_url}?agecd=&areacd=&bizcd=&careercd=&catecd=&cur_pack=0"
@@ -239,7 +240,7 @@ def show_rndjob():
     if not pages_read:
         raise SystemExit("목록을 수집하지 못해 관심 공고 수를 확인할 수 없습니다.")
     selected = sum(counts[key] for key in INTERESTS)
-    print(f"목록 {pages_read}/5페이지 | 공고 {total}건 | 관심 공고 {selected}건")
+    print(f"목록 {pages_read}/{max_pages}페이지 | 공고 {total}건 | 관심 공고 {selected}건")
     print(" | ".join(f"{key} {counts[key]}건" for key in (*INTERESTS, "직무 제외", "자격 제외", "수집 제외")))
     return selected_postings
 
@@ -319,7 +320,7 @@ def read_loofit_card(page, card, title, description):
             modal.wait_for(state="hidden")
 
 
-def show_loofit():
+def show_loofit(max_pages=5):
     from playwright.sync_api import Error as BrowserError, sync_playwright
 
     counts = Counter()
@@ -337,7 +338,7 @@ def show_loofit():
             page = browser.new_page()
             page.set_default_timeout(12000)
             page.goto(SITES["SKALA 루핏"], wait_until="domcontentloaded")
-            for number in range(1, 6):
+            for number in range(1, max_pages + 1):
                 if number > 1:
                     target = page.locator(f'.paging .page[data-page="{number}"]')
                     if not target.count():
@@ -375,22 +376,31 @@ def show_loofit():
     return selected_postings
 
 
+def open_postings(postings, today):
+    """Keep postings with today's or a future deadline, plus undated postings."""
+    return [posting for posting in postings
+            if not posting.get("deadline") or posting["deadline"] >= today]
+
+
 def main():
     from collectors import NEW_SITES, collect_site
 
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--rndjob", action="store_true", help="R&D잡 1~5페이지의 관심 공고와 근거 보기")
-    parser.add_argument("--loofit", action="store_true", help="SKALA 루핏 전체 채용정보 1~5페이지 분류")
+    parser.add_argument("--rndjob", action="store_true", help="R&D잡의 관심 공고와 근거 보기")
+    parser.add_argument("--loofit", action="store_true", help="SKALA 루핏 전체 채용정보 분류")
     parser.add_argument("--notion", action="store_true", help="관심 공고를 Notion에 저장하거나 기존 행 갱신")
     parser.add_argument("--output", type=Path, help="관심 공고를 JSON 파일로 보관 (재실행/연결 도구용)")
     parser.add_argument("--dry-run", action="store_true", help="저장할 관심 공고를 JSON으로 미리 보기; Notion에 쓰지 않음")
     parser.add_argument("--all", action="store_true", help="캐치를 제외한 7개 주소 수집")
     parser.add_argument("--site", action="append", choices=list(NEW_SITES), default=[], help="추가 사이트 선택 (여러 번 지정 가능)")
     parser.add_argument("--limit", type=int, default=50, help="추가 사이트별 최대 공고 수 (기본 50, 다직무는 각각 분리)")
+    parser.add_argument("--pages", type=int, default=5, help="페이지 탐색을 지원하는 목록의 최대 페이지 수 (기본 5)")
     parser.add_argument("--report", type=Path, default=Path("collection-report.json"), help="사이트별 실행 결과/제외 근거 JSON")
     args = parser.parse_args()
     if not 1 <= args.limit <= 200:
         parser.error("--limit은 1~200이어야 합니다.")
+    if not 1 <= args.pages <= 20:
+        parser.error("--pages는 1~20이어야 합니다.")
     requested = args.all or args.rndjob or args.loofit or args.site
     if (args.notion or args.output or args.dry_run) and not requested:
         parser.error("저장 옵션에는 --all, --rndjob, --loofit 또는 --site를 지정하세요.")
@@ -408,12 +418,12 @@ def main():
     print(f"OCR 엔진: {check_engine()} | 캐치: 정기 수집 보류", flush=True)
     tasks = []
     if args.all or args.rndjob:
-        tasks.append(("R&D잡", show_rndjob))
+        tasks.append(("R&D잡", lambda: show_rndjob(args.pages)))
     if args.all or args.loofit:
-        tasks.append(("SKALA 루핏", show_loofit))
+        tasks.append(("SKALA 루핏", lambda: show_loofit(args.pages)))
     keys = [key for key in NEW_SITES if key != "catch"] if args.all else list(dict.fromkeys(args.site))
     for key in keys:
-        tasks.append((NEW_SITES[key][0], lambda key=key: collect_site(key, args.limit)))
+        tasks.append((NEW_SITES[key][0], lambda key=key: collect_site(key, args.limit, args.pages)))
     postings, reports = [], []
     output = args.output or (Path("postings.json") if args.notion else None)
     for name, collect in tasks:
@@ -431,6 +441,13 @@ def main():
             print(f"{name} | 수집 실패: {error}", flush=True)
         report["ocr"] = snapshot()[ocr_before:]
         print(f"{name} | OCR 이미지 {len(report['ocr'])}건", flush=True)
+        today = datetime.now(timezone(timedelta(hours=9))).date().isoformat()
+        active = open_postings(selected, today)
+        report["expired"] = len(selected) - len(active)
+        report["selected"] = len(active)
+        if report["expired"]:
+            print(f"{name} | 마감일 경과 {report['expired']}건 제외", flush=True)
+        selected = active
         postings.extend(selected)
         # 각 사이트 처리 후 후보와 보고서를 보관하고, 다른 사이트 오류와 독립적으로 저장한다.
         if output:

@@ -19,6 +19,13 @@ on:
           - jobkorea
           - jasoseol
           - egong
+      depth:
+        description: '수집 범위 (wide는 이전 목록까지 탐색)'
+        type: choice
+        default: normal
+        options:
+          - normal
+          - wide
 
 permissions:
   contents: read
@@ -30,7 +37,7 @@ concurrency:
 jobs:
   collect:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: ${{ inputs.depth == 'wide' && 120 || 60 }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -73,6 +80,7 @@ jobs:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           PYTHONUNBUFFERED: '1'
           COLLECTION_SITE: ${{ inputs.site || 'all' }}
+          COLLECTION_DEPTH: ${{ inputs.depth || 'normal' }}
         run: |
           set -eo pipefail
           if [ -z "$NOTION_TOKEN" ]; then
@@ -85,6 +93,11 @@ jobs:
             loofit) args=(--loofit) ;;
             saramin-home|saramin-kangso|jobkorea|jasoseol|egong) args=(--site "$COLLECTION_SITE") ;;
             *) echo '::error::Unknown collection site'; exit 1 ;;
+          esac
+          case "$COLLECTION_DEPTH" in
+            normal) ;;
+            wide) args+=(--pages 10 --limit 100) ;;
+            *) echo '::error::Unknown collection depth'; exit 1 ;;
           esac
           python -u fetch_page.py "${args[@]}" --notion --output postings.json | tee collection.log
 
