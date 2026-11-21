@@ -1,0 +1,23 @@
+{
+  "companies": [
+    {
+      "name": "LS ITC",
+      "aliases": ["LS ITC", "LSITC", "엘에스아이티씨"],
+      "references": ["https://www.jobkorea.co.kr/Recruit/GI_Read/50376620", "https://lsitc.recruiter.co.kr/career/jobs/134608"]
+    }
+  ],
+  "campaigns": [
+    {
+      "id": "ls-itc-2027-intern-20261117",
+      "company": "LS ITC",
+      "year": "2027",
+      "start": "2026-11-17",
+      "end": "2026-11-29",
+      "urls": ["https://www.jobkorea.co.kr/Recruit/GI_Read/50376620", "https://egongmoya.letuin.com/CommunityBoard/view/2026/11/36682", "https://lsitc.recruiter.co.kr/career/jobs/134608"],
+      "summary_titles": ["2027 LS ITC 채용연계형 인턴 모집", "[인턴] 【LS ITC】 시스템 개발 및 운영, 네트워크 운영 및 구축 등 채용형 인턴 채용 (~11/29)"],
+      "roles": ["시스템 개발 및 운영", "네트워크 운영 및 구축", "정보 보안", "클라우드 인프라", "AI 서비스 기획 및 개발", "AI 서비스 시스템 운영"],
+      "references": ["https://lsitc.recruiter.co.kr/upload/104812/image/202611/1a003dca-4ffd-4542-a765-2819634d6543.jpg", "https://lsitc.recruiter.co.kr/upload/104812/image/202611/2c7f1e94-b466-44ef-8e05-7b24b0ed66f8.jpg"],
+      "verified_on": "2026-11-21"
+    }
+  ]
+}

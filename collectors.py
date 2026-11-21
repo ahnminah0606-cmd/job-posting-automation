@@ -171,7 +171,7 @@ def egong_roles(title, html, base_url):
         intern = "인턴" in title and re.search(r"졸업\s*예정", BeautifulSoup(body, "html.parser").get_text())
         career = "신입" if "신입" in role_title or intern else ""
         if intern and "인턴" not in role_title:
-            role_title += " (채용형 인턴)" if "채용형 인턴" in title else " (인턴)"
+            role_title += " (채용형 인턴)" if re.search(r"채용\s*(?:연계)?형\s*인턴", title) else " (인턴)"
         decision = qualification(role_title, career) or classify_body(role_title, body)
         decisions.append((role_title, decision))
     return decisions
@@ -374,7 +374,9 @@ def collect_site(key, limit=50, max_pages=5):
                     body = frame.select_one('[data-sentry-component="HtmlViewer"]')
                     if body is None:
                         raise CollectionError("잡코리아 공개 상세요강 본문 없음")
-                    decision = classify_body(title, str(body), base_url=frame_url)
+                    for role_title, role_decision in egong_roles(title, str(body), frame_url):
+                        record(card, role_decision, company=company, title=role_title, deadline=deadline)
+                    return
             elif key == "catch":
                 soup = reader.soup(card["url"])
                 schema = next(job_schema(soup), None)

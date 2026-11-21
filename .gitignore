@@ -10,3 +10,4 @@ collection-report*.json
 .cache/
 image-postings.json
 image-verification-report.json
+duplicate-review*.json

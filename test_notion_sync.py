@@ -7,7 +7,7 @@ from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
 from notion_sync import (FIELDS, SCHEMA, NotionClient, NotionError, canonical_url,
-                         deadline_from_text, make_posting, properties_for, rich_text, save_postings)
+                         deadline_from_text, make_posting, properties_for, rich_text, save_postings, property_text)
 
 
 def posting(**changes):
@@ -75,10 +75,10 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(client.upsert(first)[0], "갱신")
         self.assertEqual(len(client.rows), 1)
         props = client.rows[0]["properties"]
-        self.assertIn("R&D잡", props["출처"]["rich_text"][0]["text"]["content"])
+        self.assertIn("R&D잡", property_text(props, "출처"))
         self.assertNotIn("수집 키", props)
         self.assertNotIn("판단 근거", props)
-        self.assertIn("SKALA 루핏", props["출처"]["rich_text"][0]["text"]["content"])
+        self.assertIn("SKALA 루핏", property_text(props, "출처"))
 
     def test_different_role_same_apply_link_stays_separate(self):
         client = MemoryNotion()
@@ -96,7 +96,9 @@ class SyncTests(unittest.TestCase):
     def test_ambiguous_existing_rows_abort(self):
         client = MemoryNotion()
         client.upsert(posting())
-        client.rows.append(copy.deepcopy(client.rows[0]))
+        duplicate = copy.deepcopy(client.rows[0])
+        duplicate["id"] = "existing-duplicate"
+        client.rows.append(duplicate)
         with self.assertRaises(NotionError):
             client.upsert(posting())
 
