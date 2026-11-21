@@ -166,3 +166,26 @@ class ParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class CatchCareerRepresentationTests(unittest.TestCase):
+    def collect_career(self,career):
+        schema={'@type':'JobPosting','title':'반도체 공정 개발 신입/경력','hiringOrganization':{'name':'회사'},'experienceRequirements':career,'educationRequirements':'학사','validThrough':'2026-12-31T23:59'}
+        detail=soup('<script type="application/ld+json">'+json.dumps(schema)+'</script><iframe src="/controls/recruitDetail/42"></iframe>')
+        card=dict(id='42',company='회사',title=schema['title'],career='',url='https://www.catch.co.kr/NCS/RecruitInfoDetails/42')
+        body='<h2>담당업무</h2><p>반도체 웨이퍼 공정 개발 및 장비 평가 업무</p><h2>지원자격</h2><p>학사 신입 지원 가능</p>'
+        with patch('collectors.PublicReader') as reader,redirect_stdout(io.StringIO()):
+            reader.return_value.soup.return_value=detail;reader.return_value.read.return_value=body
+            return collect_site('catch',recheck_cards=[card])
+
+    def test_entry_and_experienced_array_is_mixed_not_experienced_only(self):
+        postings,report=self.collect_career(['신입','경력'])
+        self.assertEqual(len(postings),1,report)
+
+    def test_single_entry_string_is_not_split_into_characters(self):
+        postings,report=self.collect_career('신입')
+        self.assertEqual(len(postings),1,report)
+
+    def test_experienced_only_array_remains_excluded(self):
+        postings,report=self.collect_career(['경력'])
+        self.assertEqual(postings,[])
+        self.assertEqual(report['counts'],{'자격 제외':1})

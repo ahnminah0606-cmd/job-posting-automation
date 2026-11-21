@@ -414,7 +414,9 @@ def collect_site(key, limit=50, max_pages=5, *, recheck_cards=None):
                 if not schema:
                     raise CollectionError("캐치 JobPosting 상세 메타데이터 없음")
                 company, title = schema["hiringOrganization"]["name"], schema["title"]
-                decision = qualification(title, " ".join(schema.get("experienceRequirements", [])), str(schema.get("educationRequirements", "")))
+                career = schema.get("experienceRequirements") or ""
+                career = " / ".join(career) if isinstance(career, list) else str(career)
+                decision = qualification(title, career, str(schema.get("educationRequirements", "")))
                 deadline = iso_deadline(schema.get("validThrough"))
                 if not decision:
                     frame = soup.select_one('iframe[src^="/controls/recruitDetail/"]')
