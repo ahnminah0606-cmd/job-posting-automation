@@ -147,3 +147,44 @@ class RecoveryCLITests(unittest.TestCase):
             self.assertEqual(json.loads(output.read_text()),[future])
             self.assertEqual(json.loads(audit.read_text())[0]['expired'],1)
             save.assert_not_called()
+
+class ActualCollectorReplayTests(unittest.TestCase):
+    def test_replay_recovers_each_poster_date_and_never_uses_another_role_date(self):
+        from collectors import collect_site
+        from contextlib import redirect_stdout
+        import io
+        expected=['2026-11-29','2026-11-22','2026-11-25']
+        for case,deadline in zip(CASES,expected):
+            html=fixture_html(case)
+            card=dict(id=case['id'],company=case['company'],title=case['title'],url=case['url'],career='',api='https://egongmoya.letuin.com/api/board'+case['url'].split('.com')[1])
+            with patch('collectors.PublicReader') as reader,redirect_stdout(io.StringIO()):
+                reader.return_value.json.return_value=dict(code=1000,data=dict(view=dict(content=html)))
+                postings,report=collect_site('egong',recheck_cards=[card])
+            self.assertEqual(report['status'],'success')
+            self.assertEqual(len(postings),1,report)
+            self.assertEqual(postings[0]['deadline'],deadline,case['company'])
+
+class OCRRoleOwnershipTests(unittest.TestCase):
+    def setUp(self):
+        self.html=Path(__file__).with_name('fixtures').joinpath('scoped-ocr-table.html').read_text()
+        self.names=['Resource','Growth','Biz Ops','IT팀','인사팀']
+
+    def test_entire_ocr_poster_is_never_a_dom_role_scope(self):
+        from collectors import scoped_body
+        self.assertEqual(scoped_body(self.html,'인사팀',self.names),'')
+
+    def test_roster_names_and_preferences_do_not_inherit_other_roles_ai_duties(self):
+        from ocr import scope_ocr_role
+        from collectors import classify_body
+        results=[classify_body(name,scope_ocr_role(self.html,name,self.names))[0] for name in self.names]
+        self.assertEqual(results,['직무 제외','직무 제외','AX','AX','직무 제외'])
+        hr=scope_ocr_role(self.html,'인사팀',self.names)
+        self.assertNotIn('AI 코딩 에이전트',hr)
+
+    def test_common_degree_applies_but_other_role_degree_does_not(self):
+        from ocr import scope_ocr_role
+        from collectors import classify_body
+        changed=self.html.replace('·학력·전공·연령·성별·경력 제한 없음','석사 필수')
+        self.assertEqual(classify_body('IT팀',scope_ocr_role(changed,'IT팀',self.names))[0],'자격 제외')
+        changed=self.html.replace('디캠프의 인사 업무를 지원합니다.','디캠프의 인사 업무를 지원합니다. 석사 필수')
+        self.assertEqual(classify_body('IT팀',scope_ocr_role(changed,'IT팀',self.names))[0],'AX')

@@ -195,31 +195,61 @@ def enrich_html(html, base_url=""):
 
 
 def scope_ocr_role(html, role, roles):
-    """OCR에서 직무 이름을 찾고 다음 직무 이름 전까지 명확한 구획만 잘라낸다."""
-    compact = lambda value: re.sub(r"[^가-힣a-zA-Z0-9]", "", value).lower()
-    target = compact(role)
-    soup = BeautifulSoup(html, "html.parser")
-    lines = soup.select("section[data-ocr] p[data-y]")
-    other = {compact(value) for value in roles if compact(value) != target}
-    start = next((i for i, line in enumerate(lines) if target and target in compact(line.get_text())
-                  and not any(value and value in compact(line.get_text()) for value in other)), None)
-    if start is None:
-        return ""
-    end = next((i for i in range(start + 1, len(lines))
-                if any(value and value in compact(lines[i].get_text()) for value in other)), len(lines))
-    selected = lines[start:end]
-    if len(selected) < 3:
-        return ""
-    content = "\n".join(line.get_text() for line in selected)
-    # 공통 지원자격이 명시된 경우는 해당 직무에도 함께 적용한다.
-    full_text = soup.get_text("\n", strip=True)
-    common = re.search(r"(?:공통\s*지원\s*자격|공통\s*자격\s*요건)([\s\S]{0,1500})", full_text)
-    if common:
-        content += "\n지원자격\n" + common[1]
-    if not re.search(r"담당\s*업무|주요\s*업무|수행\s*업무", content):
-        # 표에서 역할별 행은 찾았지만 업무 컬럼을 식별하지 못하면 추정하지 않는다.
-        return ""
-    return "<section>" + "".join("<p>" + html_module.escape(line) + "</p>" for line in content.splitlines()) + "</section>"
+    """목차의 이름이 아닌 업무·자격 구간에 연결된 직무 이름을 찾는다."""
+    compact=lambda v:re.sub(r'[^가-힣a-zA-Z0-9]','',v).casefold()
+    target=compact(role)
+    soup=BeautifulSoup(html,'html.parser')
+    nodes=soup.select('section[data-ocr] p[data-y]')
+    lines=[p.get_text(' ',strip=True) for p in nodes]
+    others={compact(v) for v in roles if compact(v)!=target}
+    duty=re.compile(r'^(?:담당\s*업무|주요\s*업무|수행\s*업무|업무\s*내용)\s*[:：]?$')
+    qual=re.compile(r'^(?:지원\s*자격|자격\s*요건|필수\s*요건|필요\s*역량)\s*[:：]?$')
+    headings=[i for i,t in enumerate(lines) if duty.search(t)]
+    def paragraphs(start,end):
+        result=[];previous=None
+        for i in range(start,end):
+            line=lines[i];node=nodes[i]
+            if compact(line)==target or re.fullmatch(r'\(?\d+명\)?',line):
+                continue
+            geometry=previous is not None and all(n.has_attr('data-'+a) for n in (previous,node) for a in ('x','height','y'))
+            continuation=(geometry and result and result[-1].startswith(('·','•','-'))
+                          and not line.startswith(('·','•','-')) and not re.search(r'[.!?。]$',result[-1])
+                          and node.parent is previous.parent
+                          and 0<float(node['data-y'])-float(previous['data-y'])<=max(float(node['data-height']),float(previous['data-height']))*2.2
+                          and -.01<=float(node['data-x'])-float(previous['data-x'])<=.04)
+            if continuation:
+                result[-1]+=' '+line
+            else:
+                result.append(line)
+            previous=node
+        return result
+    candidates=[]
+    for index,start in enumerate(headings):
+        following=headings[index+1] if index+1<len(headings) else len(lines)
+        q=next((i for i in range(start+1,following) if qual.search(lines[i])),None)
+        if q is None:
+            continue
+        names=[compact(t) for t in lines[max(0,start-1):q]]
+        if target not in names or any(name in others for name in names):
+            continue
+        end=following
+        # 다음 직무의 소개를 현재 직무의 자격으로 섞지 않는다.
+        for i in range(q+1,following):
+            value=compact(lines[i])
+            if any(value.startswith(other) for other in others if other):
+                end=i;break
+            if re.search(r'^(?:임용결격|전형절차|지원방법|모집기간|채용프로세스)',value):
+                end=i;break
+        content=[role,*paragraphs(start,end)]
+        # 명시된 공통 자격만 추가하고 다음 직무·전형 안내는 복제하지 않는다.
+        common_start=next((i for i,t in enumerate(lines[:start]) if re.search(r'공통.{0,8}(?:자격|요건)|(?:지원)?자격.{0,8}공통',t)),None)
+        if common_start is not None:
+            common_end=next((i for i in range(common_start+1,len(lines)) if
+                re.search(r'근무\s*조건|전형\s*방법|전형\s*절차|지원\s*방법|모집\s*기간|부문별\s*직무소개',lines[i]) or duty.search(lines[i])),start)
+            if common_end<=start:
+                content+=['지원자격',*paragraphs(common_start,common_end)]
+        candidates.append('<section>'+''.join('<p>'+html_module.escape(t)+'</p>' for t in content)+'</section>')
+    return candidates[0] if len(candidates)==1 else ''
 
 
 def split_ocr_table(html):

@@ -199,12 +199,15 @@ def egong_roles(title, html, base_url):
     return decisions
 
 
-def scoped_body(html, role):
+def scoped_body(html, role, roles=()):
     """다직무 공고를 한 행으로 섞지 않도록 직무가 명시된 최소 구획만 사용한다."""
     soup = BeautifulSoup(html, "html.parser")
     for node in soup.find_all(string=lambda s: s and role.strip() == s.strip()):
         for parent in node.parents:
-            if parent.name in {"tr", "section", "article", "li"} and len(text(parent)) > len(role) + 30:
+            if (parent.name in {"tr", "section", "article", "li"}
+                and not parent.has_attr("data-ocr")
+                and not any(t.strip() in set(roles)-{role} for t in parent.stripped_strings)
+                and len(text(parent)) > len(role) + 30):
                 return str(parent)
     return ""
 
@@ -433,7 +436,7 @@ def collect_site(key, limit=50, max_pages=5, *, recheck_cards=None):
                 separated = dict(split_ocr_roles(html, title))
                 for role_title, decision in decisions:
                     body = separated.get(role_title, html if len(decisions) == 1 else "")
-                    record(card, decision, title=role_title, deadline=poster_deadline(body))
+                    record(card, decision, title=role_title, deadline=poster_deadline(body) or (poster_deadline(html) if len(decisions) == 1 else None))
                 return
             else:
                 raise CollectionError("지원하지 않는 수집기")
@@ -463,7 +466,7 @@ def collect_site(key, limit=50, max_pages=5, *, recheck_cards=None):
                 career = "신입" if division == 1 else ("경력" if division == 2 else "신입/경력" if division == 3 else "")
                 title = role.get("field") or card["title"]
                 decision = qualification(title, career)
-                body = (scoped_body(html, title) or scope_ocr_role(html, title, [r.get("field", "") for r in roles])) if len(roles) > 1 else html
+                body = (scoped_body(html, title, [r.get("field", "") for r in roles]) or scope_ocr_role(html, title, [r.get("field", "") for r in roles])) if len(roles) > 1 else html
                 decision = decision or (("수집 제외", ocr_error) if ocr_error else classify_body(title, body, base_url=card["url"]))
                 record(card, decision, title=title, deadline=iso_deadline(details.get("end_time")), source_id=f"{card['id']}:{role['id']}")
         except Exception as error:

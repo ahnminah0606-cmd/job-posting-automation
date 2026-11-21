@@ -64,10 +64,13 @@ def main():
     parser.add_argument('--output',type=Path,default=Path('recovery-postings.json'))
     parser.add_argument('--audit',type=Path,default=Path('recovery-report.json'))
     parser.add_argument('--include-legacy',action='store_true',help='개별 제외 기록이 없던 R&D잡·루핏은 현재 동일 범위를 재수집')
+    parser.add_argument('--site',choices=list(NEW_SITES),help='이전 보고서 중 특정 사이트만 재검토')
     parser.add_argument('--notion',action='store_true')
     args=parser.parse_args()
     original=json.loads(args.report.read_text())
     groups=targets(original)
+    if args.site:
+        groups={k:v for k,v in groups.items() if k==args.site}
     selected=[];reports=[]
     today=datetime.now(timezone(timedelta(hours=9))).date().isoformat()
     def checkpoint():
