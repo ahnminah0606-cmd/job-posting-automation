@@ -127,7 +127,7 @@ def qualification(title, career, education=""):
     for value in (title, career, education):
         if excluded_qualification(value):
             return "자격 제외", value
-    if not re.search(r"신입|^무관$", career.strip()):
+    if not re.search(r"신입|^무관$|경력\s*무관", career.strip()):
         return "자격 제외", "신입 지원 근거 부족 | " + (career or "표시 없음")
     return None
 
@@ -155,12 +155,34 @@ def classify_body(title, html, industry="", base_url=""):
     return classify_loofit_jd(title, str(soup), industry)
 
 
+def poster_deadline(html):
+    """명시된 모집 날짜 범위의 끝 또는 모집기간의 연도 포함 날짜만 사용한다."""
+    value=BeautifulSoup(html,'html.parser').get_text('\n',strip=True)
+    direct=deadline_from_text(value)
+    if direct:
+        return direct
+    date=r'(20\d{2})[.년/\-]\s*(\d{1,2})[.월/\-]\s*(\d{1,2})일?'
+    dates=[]
+    for match in re.finditer(date+r'(?:\s*\d{1,2}:\d{2})?\s*[~～–]\s*'+date,value):
+        dates.append('-'.join((match[4],match[5].zfill(2),match[6].zfill(2))))
+    for match in re.finditer(r'(?:모집|접수)\s*기간[^\n]*\n?\s*[-·•]?\s*'+date,value):
+        # 범위면 위에서 확보한 종료일을 사용한다.
+        if not dates:
+            dates.append('-'.join((match[1],match[2].zfill(2),match[3].zfill(2))))
+    if len(set(dates))==1:
+        try:
+            return datetime.strptime(dates[0],'%Y-%m-%d').date().isoformat()
+        except ValueError:
+            pass
+    return None
+
+
 def egong_roles(title, html, base_url):
     try:
         html = enrich_html(html, base_url)
     except OCRError as error:
         return [(title, ("수집 제외", str(error)))]
-    separate = split_ocr_roles(html)
+    separate = split_ocr_roles(html, title)
     if not separate:
         lines = BeautifulSoup(html, "html.parser").select("section[data-ocr] p")
         if sum(bool(re.search(r"담당\s*업무", p.get_text())) for p in lines) > 1:
@@ -169,7 +191,7 @@ def egong_roles(title, html, base_url):
     decisions = []
     for role_title, body in separate:
         intern = "인턴" in title and re.search(r"졸업\s*예정", BeautifulSoup(body, "html.parser").get_text())
-        career = "신입" if "신입" in role_title or intern else ""
+        career = "신입" if "신입" in role_title or intern or (len(separate) == 1 and "신입" in title) or re.search(r"신입", BeautifulSoup(body, "html.parser").get_text()) else ""
         if intern and "인턴" not in role_title:
             role_title += " (채용형 인턴)" if re.search(r"채용\s*(?:연계)?형\s*인턴", title) else " (인턴)"
         decision = qualification(role_title, career) or classify_body(role_title, body)
@@ -223,7 +245,7 @@ def listing_cards(key, soup):
     return cards
 
 
-def saramin_detail(reader, card):
+def saramin_detail(reader, card, split_roles=False):
     base = "https://www.saramin.co.kr"
     reader.read(card["url"])
     soup = reader.soup(base + "/zf_user/jobs/relay/view-ajax",
@@ -235,13 +257,14 @@ def saramin_detail(reader, card):
     career = labelled(soup, "경력")
     decision = qualification(title, career, labelled(soup, "학력"))
     if decision:
-        return company, title, decision, None
+        return company, title, ([(title, decision)] if split_roles else decision), None
     frame = soup.select_one('iframe[id^="iframe_content_"][src]')
     if not frame:
         raise CollectionError("사람인 상세요강 iframe 없음")
     html = reader.read(urljoin(base, frame["src"]), referer=card["url"])
     deadline = deadline_from_text("마감일 " + labelled(soup, "마감일"))
-    return company, title, classify_body(title, html, labelled(soup, "업종"), urljoin(base, frame["src"])), deadline
+    decisions = egong_roles(title, html, urljoin(base, frame["src"])) if split_roles else classify_body(title, html, labelled(soup, "업종"), urljoin(base, frame["src"]))
+    return company, title, decisions, deadline
 
 
 class JobkoreaBrowser:
@@ -322,7 +345,7 @@ class CatchBrowser(JobkoreaBrowser):
         return catch_cards(BeautifulSoup(self.page.content(), "html.parser"))
 
 
-def collect_site(key, limit=50, max_pages=5):
+def collect_site(key, limit=50, max_pages=5, *, recheck_cards=None):
     name, url = NEW_SITES[key]
     reader = PublicReader(interval=1.5 if key == "catch" else 0.5)
     counts, failures, warnings = Counter(), [], []
@@ -355,7 +378,10 @@ def collect_site(key, limit=50, max_pages=5):
             return
         try:
             if key.startswith("saramin"):
-                company, title, decision, deadline = saramin_detail(reader, card)
+                company, title, decisions, deadline = saramin_detail(reader, card, split_roles=True)
+                for role_title, decision in decisions:
+                    record(card, decision, company, role_title, deadline)
+                return
             elif key == "jobkorea":
                 soup = reader.soup(card["url"])
                 schema = next(job_schema(soup), None)
@@ -398,8 +424,16 @@ def collect_site(key, limit=50, max_pages=5):
                 if view.get("is_secret") == "y":
                     raise CollectionError("비공개 공고")
                 company, title, deadline = card["company"], card["title"], None
-                for role_title, decision in egong_roles(title, unquote_plus(view.get("content", "")), card["url"]):
-                    record(card, decision, title=role_title)
+                try:
+                    html = enrich_html(unquote_plus(view.get("content", "")), card["url"])
+                except OCRError as error:
+                    record(card, ("수집 제외", str(error)))
+                    return
+                decisions = egong_roles(title, html, card["url"])
+                separated = dict(split_ocr_roles(html, title))
+                for role_title, decision in decisions:
+                    body = separated.get(role_title, html if len(decisions) == 1 else "")
+                    record(card, decision, title=role_title, deadline=poster_deadline(body))
                 return
             else:
                 raise CollectionError("지원하지 않는 수집기")
@@ -409,9 +443,44 @@ def collect_site(key, limit=50, max_pages=5):
             failures.append(reason)
             record(card, ("수집 제외", reason))
 
+    def process_jasoseol(card):
+        try:
+            details = next_props(reader.soup(card["url"]))["initialEmploymentCompany"]
+            roles = details.get("employments") or []
+            if not roles:
+                raise CollectionError("모집 직무 데이터 없음")
+            html = details.get("content", "")
+            eligible = [role for role in roles if role.get("division") in {1, 3}]
+            ocr_error = None
+            if eligible:
+                try:
+                    html = enrich_html(html, card["url"])
+                except OCRError as error:
+                    ocr_error = str(error)
+            for role in roles:
+                # 상세 JSON의 division 1은 화면의 신입, 2는 경력에 대응한다.
+                division = role.get("division")
+                career = "신입" if division == 1 else ("경력" if division == 2 else "신입/경력" if division == 3 else "")
+                title = role.get("field") or card["title"]
+                decision = qualification(title, career)
+                body = (scoped_body(html, title) or scope_ocr_role(html, title, [r.get("field", "") for r in roles])) if len(roles) > 1 else html
+                decision = decision or (("수집 제외", ocr_error) if ocr_error else classify_body(title, body, base_url=card["url"]))
+                record(card, decision, title=title, deadline=iso_deadline(details.get("end_time")), source_id=f"{card['id']}:{role['id']}")
+        except Exception as error:
+            failures.append(f"자소설 상세 {card['id']}: {type(error).__name__}")
+            record(card, ("수집 제외", failures[-1]))
+
     pages_read = 0
     try:
-        if key in {"saramin-home", "saramin-kangso", "jobkorea"}:
+        if recheck_cards is not None:
+            for index,card in enumerate(recheck_cards,1):
+                if index == 1 or index % 10 == 0:
+                    print(f"{name} | 재검토 광고 {index}/{len(recheck_cards)}",flush=True)
+                if key == "jasoseol":
+                    process_jasoseol(card)
+                else:
+                    process(card)
+        elif key in {"saramin-home", "saramin-kangso", "jobkorea"}:
             cards = listing_cards(key, reader.soup(url))
             if not cards:
                 raise CollectionError("목록에서 개별 공고 링크를 읽지 못함")
@@ -438,31 +507,7 @@ def collect_site(key, limit=50, max_pages=5):
                         break
                     seen.add(item["id"])
                     card = dict(id=str(item["id"]), title=item["title"], company=item["name"], url=f"https://jasoseol.com/recruit/{item['id']}")
-                    try:
-                        details = next_props(reader.soup(card["url"]))["initialEmploymentCompany"]
-                        roles = details.get("employments") or []
-                        if not roles:
-                            raise CollectionError("모집 직무 데이터 없음")
-                        html = details.get("content", "")
-                        eligible = [role for role in roles if role.get("division") in {1, 3}]
-                        ocr_error = None
-                        if eligible:
-                            try:
-                                html = enrich_html(html, card["url"])
-                            except OCRError as error:
-                                ocr_error = str(error)
-                        for role in roles:
-                            # 상세 JSON의 division 1은 화면의 신입, 2는 경력에 대응한다.
-                            division = role.get("division")
-                            career = "신입" if division == 1 else ("경력" if division == 2 else "신입/경력" if division == 3 else "")
-                            title = role.get("field") or card["title"]
-                            decision = qualification(card["title"] + " " + title, career)
-                            body = (scoped_body(html, title) or scope_ocr_role(html, title, [r.get("field", "") for r in roles])) if len(roles) > 1 else html
-                            decision = decision or (("수집 제외", ocr_error) if ocr_error else classify_body(title, body, base_url=card["url"]))
-                            record(card, decision, title=title, deadline=iso_deadline(details.get("end_time")), source_id=f"{item['id']}:{role['id']}")
-                    except Exception as error:
-                        failures.append(f"자소설 상세 {item['id']}: {type(error).__name__}")
-                        record(card, ("수집 제외", failures[-1]))
+                    process_jasoseol(card)
                 if len(seen) >= limit:
                     break
         elif key in {"catch", "egong"}:
@@ -533,7 +578,7 @@ def collect_site(key, limit=50, max_pages=5):
             catch_browser.__exit__()
     report = dict(site=name, pages=pages_read, postings_seen=sum(counts.values()),
                   counts=dict(counts), failures=failures, warnings=warnings, audit=audit,
-                  coverage="featured-only" if featured_only else "configured-list",
+                  coverage="explicit-recheck" if recheck_cards is not None else "featured-only" if featured_only else "configured-list",
                   status="failed" if failures else "partial" if warnings else "success")
     print(f"{name} | 목록 {pages_read}페이지 | 직무 {sum(counts.values())}건 | 관심 {len(postings)}건 | " + " | ".join(f"{k} {v}건" for k, v in counts.items()), flush=True)
     for failure in failures:

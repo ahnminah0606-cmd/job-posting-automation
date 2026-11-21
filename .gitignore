@@ -11,3 +11,5 @@ collection-report*.json
 image-postings.json
 image-verification-report.json
 duplicate-review*.json
+/recovery-*.json
+/recovery-*.log

@@ -185,6 +185,9 @@ def enrich_html(html, base_url=""):
         for line in document["lines"]:
             p = soup.new_tag("p")
             p["data-y"] = str(line["y"])
+            for axis in ("x", "width", "height"):
+                if axis in line:
+                    p["data-" + axis] = str(line[axis])
             p.string = line["text"]
             block.append(p)
         image.replace_with(block)
@@ -256,9 +259,104 @@ def split_ocr_table(html):
     return roles
 
 
-def split_ocr_roles(html):
+def split_ocr_grid(html, source_title=""):
+    """좌표와 같은 행의 열 제목이 확인되는 단일 직무 표를 열 단위로 복원한다.
+
+    여러 직무의 행 경계가 불명확하면 추측하지 않고 기존 분리기로 넘긴다.
+    자격은 업무 열과 섞지 않고 공통 요강도 각 직무에 보존한다.
+    """
+    soup = BeautifulSoup(html, 'html.parser')
+    sections = soup.select('section[data-ocr]')
+    parsed = []
+    for section in sections:
+        lines = []
+        for p in section.select('p[data-x][data-y][data-width][data-height]'):
+            lines.append(dict(text=p.get_text(' ', strip=True), x=float(p['data-x']),
+                              y=float(p['data-y']), width=float(p['data-width']), height=float(p['data-height'])))
+        # 짧은 로고 이미지 외 다른 내용이 있는 이미지는 함께 확인해야 한다.
+        if not lines:
+            if len(section.get_text(' ', strip=True)) > 80:
+                return []
+            continue
+        headers = []
+        for line in lines:
+            label = re.sub(r'[\s\[\]<>:：]', '', line['text'])
+            kind = ('duty' if label in {'담당업무','주요업무','업무내용','수행업무'} else
+                    'role' if label in {'직무','모집직무','모집부문','모집분야'} else
+                    'qual' if re.fullmatch(r'(?:지원)?자격(?:요건)?(?:및(?:우대사항|상세사항))?', label) else None)
+            if kind:
+                headers.append((kind, line))
+        candidates = []
+        for kind, duty in headers:
+            if kind != 'duty':
+                continue
+            same = [(k,l) for k,l in headers if abs(l['y']-duty['y']) < max(l['height'],duty['height'])*1.2]
+            role = next((l for k,l in same if k=='role' and l['x']<duty['x']), None)
+            qual = next((l for k,l in same if k=='qual' and l['x']>duty['x']), None)
+            if role and qual:
+                candidates.append((role,duty,qual))
+        if len(candidates) != 1:
+            if len(section.get_text(' ',strip=True)) > 80:
+                return []
+            continue
+        role,duty,qual = candidates[0]
+        header_y = max(l['y']+l['height'] for l in (role,duty,qual))
+        center = lambda l: l['x']+l['width']/2
+        # 다른 열(법인·대상)이 있으면 해당 열 제목도 경계 계산에 포함한다.
+        header_row = sorted([l for l in lines if abs(l['y']-duty['y']) < max(l['height'],duty['height'])*1.2],key=center)
+        def limits(header):
+            pos=header_row.index(header)
+            return ((center(header_row[pos-1])+center(header))/2 if pos else 0,
+                    (center(header_row[pos+1])+center(header))/2 if pos+1<len(header_row) else 1)
+        role_left,role_right=limits(role)
+        duty_left,duty_right=limits(duty)
+        # 표 뒤 공통 요강은 별도 자격 영역으로 보존한다.
+        end = next((l['y'] for l in lines if l['y']>header_y and
+                    re.search(r'공통\s*(?:자격|사항)|접수\s*방법|제출\s*서류|전형\s*절차|지원\s*관련정보',l['text'])),1)
+        contents=[l for l in lines if header_y < l['y'] < end]
+        role_lines=sorted([l for l in contents if role_left<=center(l)<role_right],key=lambda l:l['y'])
+        if not role_lines:
+            return []
+        groups=[]
+        for l in role_lines:
+            if groups and l['y']-(groups[-1][-1]['y']+groups[-1][-1]['height'])<=max(l['height'],groups[-1][-1]['height'])*1.4:
+                groups[-1].append(l)
+            else:
+                groups.append([l])
+        if len(groups)!=1:
+            return []
+        title=' '.join(l['text'] for l in role_lines)
+        if len(title)>100 or re.search(r'자격|필수|우대|학력|석사|박사',title):
+            return []
+        duties=[l for l in contents if duty_left<=center(l)<duty_right and l not in role_lines]
+        if not duties:
+            return []
+        other=[l['text'] for l in lines if l['y']>header_y and l not in duties and l not in role_lines]
+        # 단일 직무의 공공 메타데이터와 첫 표 제목이 일치하면 OCR 오자의 전파를 줄인다.
+        compact=lambda t: re.sub(r'\s+','',t).casefold()
+        metadata=re.sub(r'^(?:\[[^]]+\]\s*)?【[^】]+】\s*','',source_title).strip()
+        metadata=re.split(r'\s+신입(?:\s*[/·]\s*경력)?\s*(?:채용|모집)',metadata)[0]
+        if (metadata and compact(role_lines[0]['text']) in compact(metadata)
+            and not re.search(r'각\s*(?:부문|분야)|부문별|등|,| 및 ',metadata)
+            and not re.search(r'채용|모집|~',metadata)):
+            title=metadata
+        # 단일 직무의 대상/자격 열에서 확인된 신입 표시를 제목에 남긴다.
+        if re.search(r'(?:^|[:：·\s])신입(?:$|[\s/·(])','\n'.join(other)) and '신입' not in title:
+            title+=' (신입)'
+        body='<section><h3>담당업무</h3>'+''.join('<p>'+html_module.escape(l['text'])+'</p>' for l in duties)
+        body+='<h3>지원자격</h3>'+''.join('<p>'+html_module.escape(t)+'</p>' for t in other)+'</section>'
+        parsed.append((title,body))
+    outside = BeautifulSoup(html,'html.parser')
+    for section in outside.select('section[data-ocr]'):
+        section.decompose()
+    if re.search(r'공통|지원\s*자격|자격\s*요건|석사|박사|경력',outside.get_text()) or len(outside.get_text(' ',strip=True))>200:
+        return []
+    return parsed
+
+
+def split_ocr_roles(html, source_title=""):
     """각각 제목·업무·자격을 갖춘 별도 직무 포스터만 분리한다. 표의 행은 추정하지 않는다."""
-    table_roles = split_ocr_table(html)
+    table_roles = split_ocr_grid(html, source_title) or split_ocr_table(html)
     if table_roles:
         return table_roles
     soup = BeautifulSoup(html, 'html.parser')
@@ -269,7 +367,7 @@ def split_ocr_roles(html):
         value = '\n'.join(lines)
         title = lines[0] if lines else ''
         # 신입 표기가 있는 구체적인 직무 헤더와 자격요건이 한 이미지에 모두 있어야 한다.
-        named = re.search(r'신입|경력|인턴', title) and re.search(r'엔지니어|Engineer|개발|설계|검증|공정|연구|기술|분석|데이터|품질|AI|SW', title, re.I)
+        named = re.search(r'신입|경력|인턴', ' '.join(lines[:5])) and re.search(r'엔지니어|Engineer|개발|설계|검증|공정|연구|기술|분석|데이터|품질|AI|AX|SW|정보보안', title, re.I)
         if named and re.search(r'담당\s*업무|주요\s*업무|수행\s*업무', value) and re.search(r'지원\s*자격|자격\s*요건', value):
             roles.append((title, str(section)))
         else:

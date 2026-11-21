@@ -45,25 +45,34 @@ def read_rndjob_page(url):
     return BeautifulSoup(content, "html.parser", from_encoding=charset)
 
 
-EXCLUDED_QUALIFICATION = re.compile(
-    r"경력|석사|박사|석[·ㆍ/･・-]?박(?:통합|사)?|대학원졸|대학원석|대학원박"
-    r"|(?<![a-z])(?:ph\.?\s*d\.?|master['’]s|masters?\s+degree|doctorate|doctoral)(?![a-z])",
-    re.IGNORECASE,
-)
+DEGREE_REQUIREMENT = re.compile(
+    r"석사|박사|석[·ㆍ/･・-]?박(?:통합|사)?|대학원졸|대학원석|대학원박"
+    r"|(?<![a-z])(?:ph\.?\s*d\.?|master['’]s|masters?\s+degree|doctorate|doctoral)(?![a-z])", re.I)
+CAREER_REQUIREMENT = re.compile(
+    r"경력(?:직|사원|자|채용|모집|필수|요건|조건|보유|필요|우대|요구|이있|을보유|을갖)|경력[^.。;\n]{0,12}\d+\s*(?:년|개월)"
+    r"|\d+\s*년[^.。;\n]{0,8}경력|(?:^|[\s/|:：,·(\[])경력(?:$|[\s/|:：,·)\]])|경력$")
+
+
+def career_text(text):
+    compact = re.sub(r"(?<=[가-힣·ㆍ/･・-])\s+(?=[가-힣·ㆍ/･・-])", "", text)
+    # 항목명·서류·수상·운전·경력 개발은 근무 경력 요건이 아니다.
+    compact = re.sub(r"(?:신입\s*/\s*)?경력(?:구분)?\s*[:：]\s*(?=신입|무관)", "", compact)
+    compact = re.sub(r"경력\s*무관(?:\s*\(신입포함\))?|(?<![가-힣])무경력", "신입", compact)
+    compact = re.sub(r"(?:수상|수료|운전)경력|경력(?:증명서|기술서|개발|개발기회)", "", compact)
+    compact = re.sub(r"신입(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*경력(?:사원|직)?", "신입", compact)
+    compact = re.sub(r"경력(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*신입(?:사원|직)?", "신입", compact)
+    return compact
 
 
 def excluded_qualification(text):
-    # 한글 공고에는 '경 력', '석 · 박사'처럼 글자 사이에 공백이 들어가기도 한다.
-    compact = re.sub(r"(?<=[가-힣·ㆍ/･・-])\s+(?=[가-힣·ㆍ/･・-])", "", text)
-    # 신입도 지원 가능한 혼합 모집 표기는 경력 전용 모집과 구분한다.
-    compact = re.sub(r"신입(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*경력(?:사원|직)?", "신입", compact)
-    compact = re.sub(r"경력(?:사원|직)?\s*(?:[/·ㆍ･・,&]|및|또는|과|혹은)+\s*신입(?:사원|직)?", "신입", compact)
-    return EXCLUDED_QUALIFICATION.search(compact)
+    # 학위 기준은 유지하고, 경력은 실제 근무 경력 조건만 확인한다.
+    compact = career_text(text)
+    return DEGREE_REQUIREMENT.search(compact) or CAREER_REQUIREMENT.search(compact)
 
 
 # 직무 분류에는 모집 제목과 담당업무를 사용한다. 우대사항의 도구명은 근거로 쓰지 않는다.
 SEMICONDUCTOR = re.compile(
-    r"반도체|웨이퍼|포토리소그래피|semiconductor|wafer|(?<![a-z])(?:dram|nand|hbm|finfet)(?![a-z])", re.I
+    r"반도체|웨이퍼|포토리소그래피|(?:soc|sip)[/a-z]*패키징|semiconductor|wafer|(?<![a-z])(?:dram|nand|hbm|finfet)(?![a-z])", re.I
 )
 TECHNICAL_WORK = re.compile(
     r"연구|설계|개발|공정|제조|소자|장비|패키징|계측|분석|평가|테스트|엔지니어|검사|정비|"
@@ -74,7 +83,8 @@ AI_TECH = re.compile(
     r"컴퓨터비전|비전모델|이상탐지모델|예측모델|분류모델", re.I
 )
 AI_WORK = re.compile(
-    r"모델(?:개발|학습|운영|구축|배포)|구축|도입|구현|학습|파인튜닝|배포|업무자동화|"
+    r"모델(?:개발|학습|운영|구축|배포)|구축|도입|구현|학습|파인튜닝|배포|업무자동화|전략수립|"
+    r"보안(?:정책운영|점검|위험.{0,15}(?:검토|통제|기준))|"
     r"(?:기반|활용|이용|통한|으로).{0,28}(?:자동화|최적화|예측|추천)|"
     r"(?:검색|예측|분류|탐지|분석|추천|에이전트|챗봇|서비스|솔루션|시스템|모델|파이프라인).{0,15}(?:개발|운영)|"
     r"(?:rag|llm|mlops|에이전트|챗봇)(?:기반)?(?:개발|운영)", re.I

@@ -47,7 +47,8 @@ class ParserTests(unittest.TestCase):
     def test_qualification_preserves_strict_user_rules(self):
         self.assertIsNone(qualification("반도체 공정 개발", "신입", "대졸"))
         self.assertIsNone(qualification("반도체 공정 개발", "무관", "학력무관"))
-        for career in ("경력무관", "경력 3년", ""):
+        self.assertIsNone(qualification("개발", "경력무관"))
+        for career in ("경력 3년", ""):
             self.assertEqual(qualification("개발", career)[0], "자격 제외")
         self.assertEqual(qualification("개발 석사 우대", "신입")[0], "자격 제외")
 
