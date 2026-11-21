@@ -188,3 +188,11 @@ class OCRRoleOwnershipTests(unittest.TestCase):
         self.assertEqual(classify_body('IT팀',scope_ocr_role(changed,'IT팀',self.names))[0],'자격 제외')
         changed=self.html.replace('디캠프의 인사 업무를 지원합니다.','디캠프의 인사 업무를 지원합니다. 석사 필수')
         self.assertEqual(classify_body('IT팀',scope_ocr_role(changed,'IT팀',self.names))[0],'AX')
+
+class QualificationConflictTests(unittest.TestCase):
+    def test_explicit_education_upper_bound_is_held_for_review(self):
+        from collectors import classify_body
+        html='<h2>주요업무</h2><p>반도체 공정 제품 조립과 계측기를 이용한 측정</p><h2>자격요건</h2><p>학력: 전문대졸 이하</p><p>경력: 신입</p>'
+        result,evidence=classify_body('반도체 제조 신입',html)
+        self.assertEqual(result,'수집 제외')
+        self.assertIn('학력 상한',evidence)

@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
-from job_identity import advert_key, company_name, is_summary, match_kind
+from job_identity import advert_key, company_name, company_key, is_summary, match_kind
 
 DATA_SOURCE_ID = "41d92822-e109-819f-afd2-000b9d895be1"
 FIELDS = {"반도체": "반도체", "AX": "AX", "반도체×AX": "반도체 × AX"}
@@ -280,6 +280,13 @@ class NotionClient:
             page = self.request("PATCH", "pages/" + existing["id"], payload)
             self.remember_write(page)
             return "갱신", page
+        # 지원 완료 기록이 있는 회사의 새 직무는 다시 추가하지 않는다.
+        # 같은 직무의 기존 행은 위에서 상태·본문을 보존하며 갱신한다.
+        applied = next((row for row in self.read_rows()
+                        if company_key(property_text(row["properties"], "회사")) == company_key(posting["company"])
+                        and ((row["properties"].get("지원 상태", {}).get("status") or {}).get("name", "").replace(" ", "") == "지원완료")), None)
+        if applied:
+            return "지원 회사 제외", {"url": applied.get("url", "")}
         incoming = identity_record(posting)
         if any(match_kind(incoming, prior) in {"same-ad-role", "verified-campaign-role", "same-origin-role"}
                for prior in self._uncertain_creates):
@@ -300,13 +307,13 @@ def save_postings(postings, client=None):
         return
     client = client or NotionClient()
     client.validate_schema()
-    counts = {"신규": 0, "갱신": 0, "요약 제외": 0}
+    counts = {"신규": 0, "갱신": 0, "요약 제외": 0, "지원 회사 제외": 0}
     with client.batch():
         for posting in postings:
             action, page = client.upsert(posting)
             counts[action] += 1
             print(f"Notion {action} | {posting['company']} | {posting['title']} | {page.get('url', '')}")
-    print(f"Notion 저장 완료 | 신규 {counts['신규']}건 | 갱신 {counts['갱신']}건 | 요약 제외 {counts['요약 제외']}건")
+    print(f"Notion 저장 완료 | 신규 {counts['신규']}건 | 갱신 {counts['갱신']}건 | 요약 제외 {counts['요약 제외']}건 | 지원 회사 제외 {counts['지원 회사 제외']}건")
 
 
 def main():

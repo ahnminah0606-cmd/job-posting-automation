@@ -156,3 +156,32 @@ class UncertainCreateTests(unittest.TestCase):
         self.assertEqual(c.creates,1);self.assertEqual(len(c.rows),1)
         self.assertEqual(c.upsert(ls(OTHER))[0],'신규')
         self.assertEqual(len(c.rows),2)
+
+class AppliedCompanyTests(unittest.TestCase):
+    def test_applied_company_new_role_is_skipped_across_verified_alias(self):
+        c=MemoryNotion();c.upsert(ls());row=c.rows[0]
+        row['properties']['지원 상태']={'status':{'name':'지원 완료'}}
+        row['body']='지원 완료 본문과 메모'
+        before=copy.deepcopy(row)
+        action,_=c.upsert(ls(OTHER,source='잡코리아 신입',url=JK,company='엘에스아이티씨㈜'))
+        self.assertEqual(action,'지원 회사 제외')
+        self.assertEqual(c.rows,[before])
+        self.assertEqual(c.upsert(ls(source='잡코리아 신입',url=JK))[0],'갱신')
+        self.assertEqual(c.rows[0]['body'],before['body'])
+        self.assertEqual(c.rows[0]['properties']['지원 상태'],before['properties']['지원 상태'])
+
+    def test_other_companies_and_not_yet_applied_roles_are_still_saved(self):
+        c=MemoryNotion();c.upsert(ls())
+        self.assertEqual(c.upsert(ls(OTHER))[0],'신규')
+        c.rows[0]['properties']['지원 상태']={'status':{'name':'지원 완료'}}
+        self.assertEqual(c.upsert(posting(company='다른 회사',url='https://example.org/another'))[0],'신규')
+        # 지원 완료 상태가 없어지면 회사의 다른 공고도 다시 수집할 수 있다.
+        c.rows[0]['properties']['지원 상태']={'status':{'name':'검토 전'}}
+        self.assertEqual(c.upsert(ls('AI 개발 다른 차수',url='https://www.jobkorea.co.kr/Recruit/GI_Read/99999'))[0],'신규')
+
+    def test_save_summary_reports_applied_company_skips(self):
+        c=MemoryNotion();c.upsert(ls());c.rows[0]['properties']['지원 상태']={'status':{'name':'지원 완료'}}
+        out=StringIO()
+        with redirect_stdout(out):save_postings([ls(OTHER)],c)
+        self.assertIn('지원 회사 제외 1건',out.getvalue())
+        self.assertEqual(len(c.rows),1)

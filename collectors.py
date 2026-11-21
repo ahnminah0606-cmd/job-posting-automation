@@ -150,6 +150,8 @@ def classify_body(title, html, industry="", base_url=""):
             if text(value_node) in {"신입", "무관"}:
                 label.decompose()
     value = text(soup)
+    if re.search(r"학력\s*[:：]?\s*(?:전문대졸|고졸|고등학교\s*졸업)\s*이하", value):
+        return "수집 제외", "상세 본문의 학력 상한 제한: 지원 가능 여부 확인 필요"
     if len(value) < 40 or not re.search(r"담당\s*업무|주요\s*업무|직무\s*(내용|소개)|지원\s*자격|자격\s*요건|수행\s*업무", value):
         return "수집 제외", "상세 요강 텍스트/직무 구획 미확인 (이미지·첨부파일 공고 포함)"
     return classify_loofit_jd(title, str(soup), industry)
